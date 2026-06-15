@@ -1207,7 +1207,16 @@ function buildKnowledgeIndex(){
 }
 const KNOWLEDGE_INDEX=buildKnowledgeIndex();
 
-// Naive keyword retrieval: score chunks by overlap with query words, return top N
+// Full knowledge base as one string — sent on every Coach call.
+// At ~16k tokens total this is a small fraction of Gemini's context window,
+// so there's no reason to do lossy keyword retrieval for a corpus this size.
+function fullKnowledgeText(){
+  return KNOWLEDGE_INDEX.map(c=>`### [${c.source}] ${c.title}\n${c.text}`).join('\n\n');
+}
+const FULL_KNOWLEDGE_TEXT=fullKnowledgeText();
+
+// Naive keyword retrieval — kept for roleplay mode (which already sends all
+// objections separately) and as a fallback, but no longer used for chat.
 function retrieveContext(query,n=5){
   const words=query.toLowerCase().match(/[a-z0-9$%°]+/g)||[];
   const stop=new Set(['the','a','an','is','are','to','for','of','and','or','in','on','what','how','do','does','i','my','me','you','your','can','should','with','this','that']);
@@ -1232,7 +1241,7 @@ async function callGemini({apiKey,model,systemPrompt,messages,useSearch}){
   const body={
     contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.text}]})),
     systemInstruction:{parts:[{text:systemPrompt}]},
-    generationConfig:{temperature:0.6,maxOutputTokens:800},
+    generationConfig:{temperature:0.6,maxOutputTokens:4096},
   };
   if(useSearch)body.tools=[{google_search:{}}];
   const res=await fetch(url,{
@@ -1254,11 +1263,13 @@ async function callGemini({apiKey,model,systemPrompt,messages,useSearch}){
 
 const COACH_SYSTEM_PROMPT=`You are Zyan Lamour's Priority1 sales coach, freight tutor, and study partner, built into his personal sales companion app.
 
+You have been given the ENTIRE knowledge base from the app in CONTEXT below: all 19 objections (triggers, responses, hints, why-it-works), all call scripts, all freight modes, the full glossary, the value-add library, quote checklists, and account case studies. This is not a partial excerpt — treat it as your complete reference library for this app.
+
 Rules:
-- Ground your answers in the CONTEXT provided below when it's relevant. If the context answers the question, prioritize it over your general knowledge.
+- Ground your answers in the CONTEXT when it's relevant, and reference it specifically (e.g., name the objection, mode, or section) rather than giving a vague answer when the content is right there.
 - Always be clear about what's official Priority1 policy (from the context) vs. your own general explanation/coaching. Use a short label like "(per your scripts)" or "(general industry context, verify with your team)" when it matters.
-- If the context doesn't cover something and you're not confident, say so plainly rather than guessing at Priority1-specific policy.
-- Be direct, concise, and practical — Zyan is on a phone, between calls. No long preambles.
+- If a question is about something genuinely not covered anywhere in the context (e.g. a brand-new topic), say so plainly rather than guessing at Priority1-specific policy — but do NOT claim something is missing if it's actually in the CONTEXT below.
+- Be direct and practical — Zyan is often on a phone, between calls. But when he asks for a list, a full breakdown, or to "list them all out," give the COMPLETE answer, not a partial one. Match response length to what's being asked: short for quick lookups, long and thorough for study/review requests.
 - For freight/industry teaching questions, you can use your general knowledge freely, but flag anything that may have changed recently as worth double-checking.
 - Never invent specific current freight rates with false precision — give ranges and label them as estimates.`;
 
@@ -2274,9 +2285,7 @@ function App(){
     if(mode==='roleplay'){
       return OBJ.map(o=>`### ${o.name}\nTrigger: "${o.trigger}"\nHint: ${o.hint}\nOfficial response: ${o.parts.join(' ')}\nWhy it works: ${o.why}`).join('\n\n');
     }
-    const chunks=retrieveContext(query,5);
-    if(chunks.length===0)return "(No directly matching content found in Zyan's reference library for this query — answer from general knowledge, and say so.)";
-    return chunks.map(c=>`### [${c.source}] ${c.title}\n${c.text}`).join('\n\n');
+    return FULL_KNOWLEDGE_TEXT;
   }
 
   function CoachScreen(){
