@@ -1287,9 +1287,9 @@ const NAV_TOOLS=[{
     },
     {
       name:'go_to_objection_card',
-      description:'Open a specific objection\'s flashcard directly, by its objection id (1-19) or by name.',
+      description:'PREFERRED tool whenever Zyan names a specific objection by name (e.g. "Honeymoon", "Pass Down", "show me the X objection"). Opens that objection\'s flashcard directly using its objection id (1-19). The app automatically opens the correct Study day for this objection — you do not need to know or specify the day.',
       parameters:{type:'OBJECT',properties:{
-        objectionId:{type:'INTEGER',description:'The objection id, 1-19, from the Objection Driller data.'},
+        objectionId:{type:'INTEGER',description:'The objection id, 1-19, from the Objection Driller data. Look this up from the objection\'s entry in CONTEXT — every objection has an id.'},
       },required:['objectionId']},
     },
     {
@@ -1330,8 +1330,27 @@ function navCallDescription(fc){
 async function callGemini({apiKey,model,systemPrompt,messages,useSearch,enableNav}){
   if(!apiKey)throw new Error('NO_KEY');
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  // Build proper multi-turn contents: a model turn that issued a function
+  // call must be followed by a functionResponse, or the next model turn
+  // tends to repeat the same call (it "thinks" it never got an answer).
+  const contents=[];
+  messages.forEach(m=>{
+    if(m.role==='assistant'){
+      const parts=(m.rawParts&&m.rawParts.length)?m.rawParts:[{text:m.text||''}];
+      contents.push({role:'model',parts});
+      const fc=parts.find(p=>p.functionCall);
+      if(fc){
+        const status=m.navResolution==='executed'?(m.navResult||'Navigation completed.')
+          :m.navResolution==='declined'?'User declined this navigation suggestion.'
+          :'Awaiting user confirmation — not yet executed.';
+        contents.push({role:'user',parts:[{functionResponse:{name:fc.functionCall.name,response:{result:status}}}]});
+      }
+    }else{
+      contents.push({role:'user',parts:m.parts||[{text:m.text}]});
+    }
+  });
   const body={
-    contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:m.parts||[{text:m.text}]})),
+    contents,
     systemInstruction:{parts:[{text:systemPrompt}]},
     generationConfig:{temperature:0.6,maxOutputTokens:4096},
   };
@@ -1380,6 +1399,11 @@ const COACH_SYSTEM_PROMPT=`You are Zyan Lamour's Priority1 sales coach, freight 
 You have been given the ENTIRE knowledge base from the app in CONTEXT below: all 19 objections (triggers, responses, hints, why-it-works), all call scripts, all freight modes, the full glossary, the value-add library, quote checklists, account case studies, and a description of the app's own structure (tabs, screens, and the Study day breakdown).
 
 You can also navigate the app for Zyan using function calls (go_to_tab, go_to_study_day, go_to_objection_card, go_to_reference_section, go_to_journal_tab). If he asks you to "go to" / "open" / "take me to" / "show me" a specific tab, day, objection, or section, call the matching function — the app will show him a confirmation before actually navigating, so you don't need to ask permission first, just call the function directly when it's clearly what he wants.
+
+Navigation accuracy rules — these matter, get them right:
+- If Zyan names a SPECIFIC OBJECTION (e.g. "show me the Honeymoon flashcard", "open the Pass Down objection"), call go_to_objection_card with that objection's id. Do NOT call go_to_study_day in this case — the app will open the correct day automatically based on the objection's actual id.
+- Before claiming which day an objection belongs to, or before calling go_to_study_day with a specific day number, re-check the "Objection Driller — Study Days" entry in CONTEXT for the exact day-to-objection mapping. Do not rely on a day number mentioned earlier in the conversation if the current request is about a different objection — re-derive it fresh each time.
+- Each new message may be about something completely different from the previous one. Don't assume continuity (e.g. "Day 5" from a prior message) carries over unless Zyan is clearly continuing the same request.
 
 Rules:
 - Ground your answers in the CONTEXT when it's relevant, and reference it specifically (e.g., name the objection, mode, or section) rather than giving a vague answer when the content is right there.
@@ -2464,18 +2488,20 @@ function App(){
         const base=coachMode==='roleplay'?ROLEPLAY_SYSTEM_PROMPT:COACH_SYSTEM_PROMPT;
         const sysPrompt=`${base}\n\nCONTEXT:\n${context}`;
         const enableNav=coachMode==='chat';
-        const {text:reply,functionCalls,usedModel,fellBack}=await callGeminiWithFallback({apiKey:geminiKey,model:geminiModel,systemPrompt:sysPrompt,
+        const {text:reply,functionCalls,usedModel,fellBack,rawParts}=await callGeminiWithFallback({apiKey:geminiKey,model:geminiModel,systemPrompt:sysPrompt,
           messages:nextMessages,useSearch:coachUseSearch&&coachMode==='chat',enableNav});
-        const assistantMsg={role:'assistant',text:reply||'',navCall:null};
+        const assistantMsg={role:'assistant',text:reply||'',navCall:null,rawParts:rawParts||[]};
         if(fellBack)assistantMsg.fellBack=usedModel;
         if(functionCalls&&functionCalls.length>0){
           const fc=functionCalls[0];
           if(autoNav){
             const result=executeNavAction(fc.name,fc.args||{});
             assistantMsg.navResult=result;
+            assistantMsg.navResolution='executed';
             showToast(result);
           }else{
             assistantMsg.navCall=fc;
+            assistantMsg.navResolution='pending';
           }
         }
         setCoachMessages([...nextMessages,assistantMsg]);
@@ -2615,12 +2641,13 @@ function App(){
                         <button onClick={()=>{
                           const result=executeNavAction(m.navCall.name,m.navCall.args||{});
                           showToast(result);
+                          setCoachMessages(prev=>prev.map((mm,ii)=>ii===i?{...mm,navCall:null,navResult:result,navResolution:'executed'}:mm));
                         }} style={{flex:1,padding:'8px',background:c.accent,color:c.accentText,
                           borderRadius:8,fontSize:12,fontWeight:700}}>
                           Go ✓
                         </button>
                         <button onClick={()=>{
-                          setCoachMessages(prev=>prev.map((mm,ii)=>ii===i?{...mm,navCall:null}:mm));
+                          setCoachMessages(prev=>prev.map((mm,ii)=>ii===i?{...mm,navCall:null,navResolution:'declined'}:mm));
                         }} style={{flex:1,padding:'8px',background:'none',color:c.textSub,
                           border:`1px solid ${c.border}`,borderRadius:8,fontSize:12,fontWeight:700}}>
                           Not now
