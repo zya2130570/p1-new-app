@@ -45,7 +45,8 @@ const {useState,useEffect,useMemo,useCallback,useRef} = React;
 function load(k,fb){try{const r=localStorage.getItem(k);return r?JSON.parse(r):fb;}catch{return fb;}}
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
 
-const SK={status:'p1_status_v3',reps:'p1_reps_v2',activity:'p1_activity_v1',theme:'p1_theme',quiz:'p1_quiz',nav:'p1_nav',geminiKey:'p1_gemini_key',geminiModel:'p1_gemini_model'};
+const SK={status:'p1_status_v3',reps:'p1_reps_v2',activity:'p1_activity_v1',theme:'p1_theme',quiz:'p1_quiz',nav:'p1_nav',geminiKey:'p1_gemini_key',geminiModel:'p1_gemini_model',journal:'p1_journal_entries',customGlossary:'p1_custom_glossary'};
+function perfKey(mk){ return 'p1_'+mk; }
 
 // ─── THEME ────────────────────────────────────────────────────────────────
 const T={
@@ -1371,28 +1372,17 @@ function App(){
     }
   },[view,coachMessages,coachLoading]);
 
-  // Load journal + performance from persistent storage on mount
+  // Load journal + performance from localStorage on mount
   useEffect(()=>{
-    (async()=>{
-      try{
-        const r=await window.storage.get('journal_entries');
-        setEntries(r&&r.value?JSON.parse(r.value):[]);
-      }catch(e){ setEntries([]); }
-      setEntriesLoaded(true);
-      try{
-        const r=await window.storage.get('custom_glossary');
-        setCustomGlossary(r&&r.value?JSON.parse(r.value):[]);
-      }catch(e){ setCustomGlossary([]); }
-      setCustomGlossaryLoaded(true);
-      try{
-        const r=await window.storage.get(monthKey());
-        const data=r&&r.value?JSON.parse(r.value):{};
-        setPerf(data);
-        setPerfView(data); // perfDate defaults to today -> same month
-      }catch(e){ setPerf({}); setPerfView({}); }
-      setPerfLoaded(true);
-      setPerfViewLoaded(true);
-    })();
+    setEntries(load(SK.journal,[]));
+    setEntriesLoaded(true);
+    setCustomGlossary(load(SK.customGlossary,[]));
+    setCustomGlossaryLoaded(true);
+    const data=load(perfKey(monthKey()),{});
+    setPerf(data);
+    setPerfView(data); // perfDate defaults to today -> same month
+    setPerfLoaded(true);
+    setPerfViewLoaded(true);
   },[]);
 
   // When the selected performance date's month differs from the current month, load that month separately
@@ -1404,14 +1394,8 @@ function App(){
       setPerfViewLoaded(true);
       return;
     }
-    setPerfViewLoaded(false);
-    (async()=>{
-      try{
-        const r=await window.storage.get(mk);
-        setPerfView(r&&r.value?JSON.parse(r.value):{});
-      }catch(e){ setPerfView({}); }
-      setPerfViewLoaded(true);
-    })();
+    setPerfView(load(perfKey(mk),{}));
+    setPerfViewLoaded(true);
   },[perfDate,perfLoaded,perf]);
 
   const saveStatus=s=>{setStatus(s);save(SK.status,s);};
@@ -1427,21 +1411,21 @@ function App(){
 
   const saveEntries=async(next)=>{
     setEntries(next);
-    try{ await window.storage.set('journal_entries',JSON.stringify(next)); setStorageError(false); }
-    catch(e){ setStorageError(true); }
+    save(SK.journal,next);
+    setStorageError(false);
   };
   const saveCustomGlossary=async(next)=>{
     setCustomGlossary(next);
-    try{ await window.storage.set('custom_glossary',JSON.stringify(next)); setStorageError(false); }
-    catch(e){ setStorageError(true); }
+    save(SK.customGlossary,next);
+    setStorageError(false);
   };
   const saveGeminiKey=k=>{ setGeminiKey(k); save(SK.geminiKey,k); };
   const saveGeminiModel=m=>{ setGeminiModel(m); save(SK.geminiModel,m); };
   const savePerf=async(next)=>{
     setPerfView(next);
     if(monthKeyFor(perfDate)===monthKey())setPerf(next);
-    try{ await window.storage.set(monthKeyFor(perfDate),JSON.stringify(next)); setStorageError(false); }
-    catch(e){ setStorageError(true); }
+    save(perfKey(monthKeyFor(perfDate)),next);
+    setStorageError(false);
   };
 
   const getStatus=id=>status[id]||'notStarted';
@@ -2541,7 +2525,7 @@ function App(){
         <div style={{...S.cardBorder,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
           <div>
             <div style={{fontSize:14,fontWeight:600}}>{entries.length} journal entries</div>
-            <div style={{fontSize:12,color:c.textSub,marginTop:2}}>Stored in your account, not this browser</div>
+            <div style={{fontSize:12,color:c.textSub,marginTop:2}}>Stored on this device</div>
           </div>
           <button onClick={resetJournal} style={{padding:'8px 16px',background:'#1a0505',
             border:'1px solid #3d1010',borderRadius:10,color:'#ef4444',fontSize:12,fontWeight:700,letterSpacing:'0.06em'}}>
@@ -2555,8 +2539,8 @@ function App(){
             Priority1 Sales Companion — built for Zyan Lamour.{'\n'}
             Objection Driller (19 cards / 6 days), full call-flow scripts, freight modes,
             glossary, value-add library, quote checklists, daily journal, and performance tracker.{'\n'}
-            Objection progress & quiz mode save to this browser. Journal and performance numbers
-            save to your account and sync across sessions.
+            Everything — objection progress, quiz mode, journal entries, performance numbers,
+            and your Gemini key — saves to this browser's local storage on this device.
           </div>
         </div>
       </div>
