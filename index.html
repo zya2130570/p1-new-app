@@ -1203,15 +1203,43 @@ function buildKnowledgeIndex(){
   GLOSSARY.forEach(g=>chunks.push({source:'Glossary',title:g.term,text:`${g.term} (${g.section}): ${g.def}`}));
   OBJ.forEach(o=>chunks.push({source:'Objection Driller',title:o.name,
     text:`Trigger: "${o.trigger}"\nHint: ${o.hint}\nResponse: ${o.parts.join('\n')}\nWhy this works: ${o.why}`}));
+  // Day-by-day breakdown of the Study tab — which objections live on which day
+  chunks.push({source:'App Structure',title:'Objection Driller — Study Days',
+    text:DAYS.map(d=>{
+      const cards=d.ids.map(id=>OBJ.find(o=>o.id===id)).filter(Boolean);
+      return `Day ${d.num} (${d.title}, "${d.sub}", internal id "${d.id}"):\n`+
+        cards.map(c=>`  - ${c.name} (objection id ${c.id})`).join('\n');
+    }).join('\n\n')});
   return chunks;
 }
 const KNOWLEDGE_INDEX=buildKnowledgeIndex();
+
+// Describes the app itself — tabs, screens, and what they're for — so the
+// Coach can reason about navigation and understand what "the app" can do,
+// not just the reference content inside it.
+const APP_STRUCTURE_TEXT=`
+This app is "Priority1 Sales Companion" — Zyan's personal sales training, reference, coaching, and tracking app. It has 6 bottom-nav tabs:
+
+1. HOME — dashboard. Shows greeting, "Today's Focus" (next objection-study day not yet mastered), overall objection mastery progress, current-month performance snapshot vs. targets, and quick links into Reference sections.
+
+2. STUDY — the Objection Driller. Contains "Day List" (Day 1 through Day 6, see "Objection Driller — Study Days" below for what's on each day), "Set List" (all objections for one day, with mastery status: Not Started / To Review / Learning / Mastered), and "Flashcard" view (front shows trigger phrase + optional hint, back shows the full response in parts plus "Why This Works", with Rehearse / Again / Learning / Mastered buttons). Quiz Mode (toggle in Settings) changes flashcard wording for when someone else is holding the phone and quizzing Zyan.
+
+3. REFERENCE — searchable knowledge library with 5 tabs: Scripts (call-flow scripts: gatekeeper, owner/SM transfer, MVPCC, meeting-setting, invoice pushes, etc.), Modes (all freight modes: LTL, Volume LTL, Partial TL, Dry Van/FTL, Flatbed, Temp-Controlled, Expedited, Drayage, Cabotage), Glossary (78 freight terms across 9 sections, plus any AI-added custom terms), Value Adds (value-add pitches by mode), Quotes (quote-intake checklists per mode). Has a search box and collapsible cards (open by default).
+
+4. COACH — this AI assistant (Coach chat mode and Roleplay mode, with optional Google Search grounding).
+
+5. JOURNAL — 3 tabs: Journal (dated entries: what happened / worked / was difficult / lesson / next action), Performance (daily entry for Qualified Leads, New Meetings, Paper Closes, Activations, New GP $, Talk Time hrs — aggregated into monthly totals vs. targets: 40 qualified leads, 4 meetings, 4 paper closes, 2 activations, $1200 GP, 2hrs/day talk time, plus a CRM-standards-met yes/no toggle), and Accounts (open items + case studies for Global Foods Group/AWG and Burr Ridge flatbed).
+
+6. SETTINGS — dark/light mode, Quiz Mode toggle, Gemini API key/model, reset options.
+
+Day numbering for Study: Day 1 = Pre-Training (internal id "pre"), Day 2 = Cold Call Basics (id "wed"), Day 3 = LTL Objections (id "thu"), Day 4 = Common Responses (id "fri"), Day 5 = Additional Responses (id "sat"), Day 6 = Pricing & FTL (id "sun"). Exact contents of each day are listed in the "Objection Driller — Study Days" entry below.
+`.trim();
 
 // Full knowledge base as one string — sent on every Coach call.
 // At ~16k tokens total this is a small fraction of Gemini's context window,
 // so there's no reason to do lossy keyword retrieval for a corpus this size.
 function fullKnowledgeText(){
-  return KNOWLEDGE_INDEX.map(c=>`### [${c.source}] ${c.title}\n${c.text}`).join('\n\n');
+  return APP_STRUCTURE_TEXT+'\n\n'+KNOWLEDGE_INDEX.map(c=>`### [${c.source}] ${c.title}\n${c.text}`).join('\n\n');
 }
 const FULL_KNOWLEDGE_TEXT=fullKnowledgeText();
 
@@ -1234,16 +1262,79 @@ function retrieveContext(query,n=5){
   return scored.filter(c=>c.score>0).sort((a,b)=>b.score-a.score).slice(0,n);
 }
 
+// ─── AI COACH: NAVIGATION TOOLS ─────────────────────────────────────────────
+// Function-calling declarations. When Gemini calls one of these, the app
+// (with user confirmation) updates its own view state to navigate there.
+const NAV_TOOLS=[{
+  functionDeclarations:[
+    {
+      name:'go_to_tab',
+      description:'Switch to one of the app\'s 6 main tabs.',
+      parameters:{type:'OBJECT',properties:{
+        tab:{type:'STRING',description:'home, study, reference, coach, journal, or settings',
+          enum:['home','study','reference','coach','journal','settings']},
+      },required:['tab']},
+    },
+    {
+      name:'go_to_study_day',
+      description:'Open the Set List (or start studying) for a specific Objection Driller day, 1 through 6.',
+      parameters:{type:'OBJECT',properties:{
+        day:{type:'INTEGER',description:'Day number, 1-6'},
+        startStudying:{type:'BOOLEAN',description:'If true, immediately start the flashcard queue for this day instead of just opening the set list. Default false.'},
+      },required:['day']},
+    },
+    {
+      name:'go_to_objection_card',
+      description:'Open a specific objection\'s flashcard directly, by its objection id (1-19) or by name.',
+      parameters:{type:'OBJECT',properties:{
+        objectionId:{type:'INTEGER',description:'The objection id, 1-19, from the Objection Driller data.'},
+      },required:['objectionId']},
+    },
+    {
+      name:'go_to_reference_section',
+      description:'Open the Reference tab to a specific section.',
+      parameters:{type:'OBJECT',properties:{
+        section:{type:'STRING',description:'scripts, modes, glossary, valueadds, or quotes',
+          enum:['scripts','modes','glossary','valueadds','quotes']},
+        searchTerm:{type:'STRING',description:'Optional search term to pre-fill in the Reference search box.'},
+      },required:['section']},
+    },
+    {
+      name:'go_to_journal_tab',
+      description:'Open the Journal section to a specific sub-tab.',
+      parameters:{type:'OBJECT',properties:{
+        tab:{type:'STRING',description:'journal, performance, or accounts',
+          enum:['journal','performance','accounts']},
+      },required:['tab']},
+    },
+  ],
+}];
+
+// Human-readable description of a pending navigation function call,
+// shown in the confirmation card before the user approves it.
+function navCallDescription(fc){
+  const a=fc.args||{};
+  switch(fc.name){
+    case 'go_to_tab': return `Switch to the "${a.tab}" tab.`;
+    case 'go_to_study_day': return `Open Day ${a.day} of the Objection Driller${a.startStudying?' and start the flashcard queue':''}.`;
+    case 'go_to_objection_card': return `Open the flashcard for objection #${a.objectionId}.`;
+    case 'go_to_reference_section': return `Open Reference → ${a.section}${a.searchTerm?` and search "${a.searchTerm}"`:''}.`;
+    case 'go_to_journal_tab': return `Open Journal → ${a.tab}.`;
+    default: return `${fc.name}(${JSON.stringify(a)})`;
+  }
+}
+
 // ─── AI COACH: GEMINI API CALL ─────────────────────────────────────────────
-async function callGemini({apiKey,model,systemPrompt,messages,useSearch}){
+async function callGemini({apiKey,model,systemPrompt,messages,useSearch,enableNav}){
   if(!apiKey)throw new Error('NO_KEY');
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const body={
-    contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.text}]})),
+    contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:m.parts||[{text:m.text}]})),
     systemInstruction:{parts:[{text:systemPrompt}]},
     generationConfig:{temperature:0.6,maxOutputTokens:4096},
   };
   if(useSearch)body.tools=[{google_search:{}}];
+  else if(enableNav)body.tools=NAV_TOOLS;
   const res=await fetch(url,{
     method:'POST',
     headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},
@@ -1256,14 +1347,18 @@ async function callGemini({apiKey,model,systemPrompt,messages,useSearch}){
   const data=await res.json();
   const cand=data.candidates&&data.candidates[0];
   if(!cand)throw new Error('NO_CANDIDATE');
-  const text=(cand.content&&cand.content.parts||[]).map(p=>p.text||'').join('');
+  const parts=(cand.content&&cand.content.parts)||[];
+  const text=parts.map(p=>p.text||'').join('');
+  const functionCalls=parts.filter(p=>p.functionCall).map(p=>p.functionCall);
   const grounded=!!(cand.groundingMetadata);
-  return {text,grounded};
+  return {text,grounded,functionCalls,rawParts:parts};
 }
 
 const COACH_SYSTEM_PROMPT=`You are Zyan Lamour's Priority1 sales coach, freight tutor, and study partner, built into his personal sales companion app.
 
-You have been given the ENTIRE knowledge base from the app in CONTEXT below: all 19 objections (triggers, responses, hints, why-it-works), all call scripts, all freight modes, the full glossary, the value-add library, quote checklists, and account case studies. This is not a partial excerpt — treat it as your complete reference library for this app.
+You have been given the ENTIRE knowledge base from the app in CONTEXT below: all 19 objections (triggers, responses, hints, why-it-works), all call scripts, all freight modes, the full glossary, the value-add library, quote checklists, account case studies, and a description of the app's own structure (tabs, screens, and the Study day breakdown).
+
+You can also navigate the app for Zyan using function calls (go_to_tab, go_to_study_day, go_to_objection_card, go_to_reference_section, go_to_journal_tab). If he asks you to "go to" / "open" / "take me to" / "show me" a specific tab, day, objection, or section, call the matching function — the app will show him a confirmation before actually navigating, so you don't need to ask permission first, just call the function directly when it's clearly what he wants.
 
 Rules:
 - Ground your answers in the CONTEXT when it's relevant, and reference it specifically (e.g., name the objection, mode, or section) rather than giving a vague answer when the content is right there.
@@ -1367,6 +1462,7 @@ function App(){
   const [coachLoading,setCoachLoading]=useState(false);
   const [coachError,setCoachError]=useState(null);
   const [coachUseSearch,setCoachUseSearch]=useState(false);
+  const [autoNav,setAutoNav]=useState(()=>load('p1_coach_autonav',false));
   const [customGlossary,setCustomGlossary]=useState([]);
   const [customGlossaryLoaded,setCustomGlossaryLoaded]=useState(false);
   const coachScrollRef=useRef(null);
@@ -1432,6 +1528,7 @@ function App(){
   };
   const saveGeminiKey=k=>{ setGeminiKey(k); save(SK.geminiKey,k); };
   const saveGeminiModel=m=>{ setGeminiModel(m); save(SK.geminiModel,m); };
+  const saveAutoNav=v=>{ setAutoNav(v); save('p1_coach_autonav',v); };
   const savePerf=async(next)=>{
     setPerfView(next);
     if(monthKeyFor(perfDate)===monthKey())setPerf(next);
@@ -1476,6 +1573,48 @@ function App(){
     setStudyView('card');setView('study');
   };
   const openSetList=day=>{ setSelDay(day); setStudyView('setList'); setView('study'); };
+
+  // Executes a navigation function call returned by the Coach. Returns a
+  // short human-readable description of what happened (fed back to Gemini
+  // and shown in the toast).
+  const executeNavAction=(name,args)=>{
+    try{
+      if(name==='go_to_tab'){
+        setView(args.tab);
+        if(args.tab==='study')setStudyView('dayList');
+        return `Switched to the ${args.tab} tab.`;
+      }
+      if(name==='go_to_study_day'){
+        const day=DAYS.find(d=>d.num===args.day);
+        if(!day)return `No Study day numbered ${args.day} exists (valid: 1-6).`;
+        if(args.startStudying)startStudy(day); else openSetList(day);
+        return `Opened Day ${day.num} (${day.title}) in Study${args.startStudying?', and started the flashcard queue':''}.`;
+      }
+      if(name==='go_to_objection_card'){
+        const obj=OBJ.find(o=>o.id===args.objectionId);
+        if(!obj)return `No objection with id ${args.objectionId} exists (valid: 1-19).`;
+        const day=DAYS.find(d=>d.id===obj.day);
+        const q=day?buildQueue(day):[obj];
+        const pos=Math.max(0,q.findIndex(c=>c.id===obj.id));
+        setSelDay(day||null);setQueue(q);setQIdx(pos);setParts(0);setHinted(false);setRevealed(false);
+        setStudyView('card');setView('study');
+        return `Opened the "${obj.name}" objection flashcard (Day ${day?day.num:'?'}).`;
+      }
+      if(name==='go_to_reference_section'){
+        setRefTab(args.section);setCollapsedRefIds(new Set());
+        setRefSearch(args.searchTerm||'');
+        setView('reference');
+        return `Opened Reference → ${args.section}${args.searchTerm?` and searched for "${args.searchTerm}"`:''}.`;
+      }
+      if(name==='go_to_journal_tab'){
+        setJournalTab(args.tab);setView('journal');
+        return `Opened Journal → ${args.tab}.`;
+      }
+      return `Unknown navigation action: ${name}.`;
+    }catch(e){
+      return `Navigation failed: ${e.message}.`;
+    }
+  };
 
   const card=queue[qIdx];
   const totalParts=card?card.parts.length:1;
@@ -2303,9 +2442,21 @@ function App(){
         const context=buildContextBlock(coachMode,text);
         const base=coachMode==='roleplay'?ROLEPLAY_SYSTEM_PROMPT:COACH_SYSTEM_PROMPT;
         const sysPrompt=`${base}\n\nCONTEXT:\n${context}`;
-        const {text:reply}=await callGemini({apiKey:geminiKey,model:geminiModel,systemPrompt:sysPrompt,
-          messages:nextMessages,useSearch:coachUseSearch&&coachMode==='chat'});
-        setCoachMessages([...nextMessages,{role:'assistant',text:reply}]);
+        const enableNav=coachMode==='chat';
+        const {text:reply,functionCalls}=await callGemini({apiKey:geminiKey,model:geminiModel,systemPrompt:sysPrompt,
+          messages:nextMessages,useSearch:coachUseSearch&&coachMode==='chat',enableNav});
+        const assistantMsg={role:'assistant',text:reply||'',navCall:null};
+        if(functionCalls&&functionCalls.length>0){
+          const fc=functionCalls[0];
+          if(autoNav){
+            const result=executeNavAction(fc.name,fc.args||{});
+            assistantMsg.navResult=result;
+            showToast(result);
+          }else{
+            assistantMsg.navCall=fc;
+          }
+        }
+        setCoachMessages([...nextMessages,assistantMsg]);
       }catch(e){
         let msg="Something went wrong talking to Gemini.";
         if(e.message==='NO_KEY')msg='No API key set — add one in Settings.';
@@ -2410,19 +2561,55 @@ function App(){
           {coachMessages.map((m,i)=>{
             const isUser=m.role==='user';
             const isCoachBreak=!isUser&&m.text.trim().startsWith('COACH:');
+            const isLastMsg=i===coachMessages.length-1;
             return(
               <div key={i} style={{display:'flex',justifyContent:isUser?'flex-end':'flex-start',marginBottom:10}}>
                 <div style={{maxWidth:'85%',padding:'10px 13px',borderRadius:14,
                   background:isUser?c.accent:(isCoachBreak?c.why:c.surfaceHigh),
                   border:isUser?'none':`1px solid ${isCoachBreak?c.whyBorder:c.border}`,
                   color:isUser?c.accentText:(isCoachBreak?c.whyText:c.text)}}>
-                  <div style={{fontSize:13,lineHeight:1.6,whiteSpace:'pre-wrap'}}>{m.text}</div>
-                  {!isUser&&!isCoachBreak&&(
+                  {isUser?(
+                    <div style={{fontSize:13,lineHeight:1.6,whiteSpace:'pre-wrap'}}>{m.text}</div>
+                  ):m.text?(
+                    <MD text={m.text} c={c}/>
+                  ):null}
+                  {!isUser&&!isCoachBreak&&m.text&&(
                     <button onClick={()=>saveAsGlossaryTerm(m.text)} style={{marginTop:8,background:'none',
                       border:`1px solid ${c.border}`,borderRadius:8,padding:'4px 8px',fontSize:10,
                       color:c.textSub,fontWeight:700,letterSpacing:'0.04em'}}>
                       💾 Save to Glossary
                     </button>
+                  )}
+                  {!isUser&&m.navCall&&isLastMsg&&(
+                    <div style={{marginTop:10,padding:'10px 12px',background:c.cardBg,
+                      border:`1px solid ${c.accent}`,borderRadius:10}}>
+                      <div style={{fontSize:11,color:c.textSub,marginBottom:8,fontWeight:700,letterSpacing:'0.04em'}}>
+                        🧭 WANTS TO NAVIGATE
+                      </div>
+                      <div style={{fontSize:12,color:c.text,marginBottom:10}}>
+                        {navCallDescription(m.navCall)}
+                      </div>
+                      <div style={{display:'flex',gap:8}}>
+                        <button onClick={()=>{
+                          const result=executeNavAction(m.navCall.name,m.navCall.args||{});
+                          showToast(result);
+                        }} style={{flex:1,padding:'8px',background:c.accent,color:c.accentText,
+                          borderRadius:8,fontSize:12,fontWeight:700}}>
+                          Go ✓
+                        </button>
+                        <button onClick={()=>{
+                          setCoachMessages(prev=>prev.map((mm,ii)=>ii===i?{...mm,navCall:null}:mm));
+                        }} style={{flex:1,padding:'8px',background:'none',color:c.textSub,
+                          border:`1px solid ${c.border}`,borderRadius:8,fontSize:12,fontWeight:700}}>
+                          Not now
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {!isUser&&m.navResult&&(
+                    <div style={{marginTop:8,fontSize:11,color:c.accent,fontWeight:600}}>
+                      🧭 {m.navResult}
+                    </div>
                   )}
                 </div>
               </div>
@@ -2521,6 +2708,20 @@ function App(){
             Default: gemini-2.5-flash. If you get a model-not-found error, check ai.google.dev for current model names —
             gemini-2.0-flash was retired in early 2026.
           </div>
+        </div>
+        <div style={{...S.cardBorder,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:600}}>Auto-Navigate</div>
+            <div style={{fontSize:12,color:c.textSub,marginTop:2,maxWidth:220,lineHeight:1.4}}>
+              {autoNav?'Coach navigates immediately when asked — no confirmation.':'Coach asks "Go?" before navigating anywhere.'}
+            </div>
+          </div>
+          <button onClick={()=>saveAutoNav(!autoNav)}
+            style={{width:50,height:28,borderRadius:14,position:'relative',
+              background:autoNav?c.accent:c.surfaceHigh,border:'none',flexShrink:0}}>
+            <div style={{width:22,height:22,borderRadius:11,background:'#fff',position:'absolute',top:3,
+              left:autoNav?25:3,transition:'left 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.3)'}}/>
+          </button>
         </div>
 
         <div style={S.sectionLabel}>DATA</div>
