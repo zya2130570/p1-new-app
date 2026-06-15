@@ -64,6 +64,8 @@ const T={
     blue:'#2563eb',green:'#16a34a',red:'#dc2626',purple:'#7c3aed'},
 };
 
+const GEMINI_MODEL_PRESETS=['gemini-2.5-flash','gemini-2.5-flash-lite','gemini-2.5-pro'];
+
 const STATUS_COLOR={mastered:'#22c55e',learning:'#f59e0b',toReview:'#3b82f6',notStarted:'#6b7280'};
 const STATUS_LABEL={mastered:'Mastered',learning:'Learning',toReview:'To Review',notStarted:'Not Started'};
 
@@ -1354,6 +1356,25 @@ async function callGemini({apiKey,model,systemPrompt,messages,useSearch,enableNa
   return {text,grounded,functionCalls,rawParts:parts};
 }
 
+// Calls Gemini with the requested model; if it gets rate-limited (429) or
+// the service is overloaded (503), automatically retries once on
+// gemini-2.5-flash-lite (much higher free-tier limits, same context window).
+// Returns the result plus which model actually answered (usedModel).
+async function callGeminiWithFallback(opts){
+  try{
+    const result=await callGemini(opts);
+    return {...result,usedModel:opts.model};
+  }catch(e){
+    const isRateOrOverload=/^HTTP_(429|503)/.test(e.message);
+    const fallbackModel='gemini-2.5-flash-lite';
+    if(isRateOrOverload&&opts.model!==fallbackModel){
+      const result=await callGemini({...opts,model:fallbackModel});
+      return {...result,usedModel:fallbackModel,fellBack:true};
+    }
+    throw e;
+  }
+}
+
 const COACH_SYSTEM_PROMPT=`You are Zyan Lamour's Priority1 sales coach, freight tutor, and study partner, built into his personal sales companion app.
 
 You have been given the ENTIRE knowledge base from the app in CONTEXT below: all 19 objections (triggers, responses, hints, why-it-works), all call scripts, all freight modes, the full glossary, the value-add library, quote checklists, account case studies, and a description of the app's own structure (tabs, screens, and the Study day breakdown).
@@ -2443,9 +2464,10 @@ function App(){
         const base=coachMode==='roleplay'?ROLEPLAY_SYSTEM_PROMPT:COACH_SYSTEM_PROMPT;
         const sysPrompt=`${base}\n\nCONTEXT:\n${context}`;
         const enableNav=coachMode==='chat';
-        const {text:reply,functionCalls}=await callGemini({apiKey:geminiKey,model:geminiModel,systemPrompt:sysPrompt,
+        const {text:reply,functionCalls,usedModel,fellBack}=await callGeminiWithFallback({apiKey:geminiKey,model:geminiModel,systemPrompt:sysPrompt,
           messages:nextMessages,useSearch:coachUseSearch&&coachMode==='chat',enableNav});
         const assistantMsg={role:'assistant',text:reply||'',navCall:null};
+        if(fellBack)assistantMsg.fellBack=usedModel;
         if(functionCalls&&functionCalls.length>0){
           const fc=functionCalls[0];
           if(autoNav){
@@ -2611,6 +2633,11 @@ function App(){
                       🧭 {m.navResult}
                     </div>
                   )}
+                  {!isUser&&m.fellBack&&(
+                    <div style={{marginTop:8,fontSize:10,color:c.textMuted}}>
+                      ⚡ {geminiModel} hit a rate limit — answered with {m.fellBack} instead.
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -2702,11 +2729,20 @@ function App(){
           <input type="password" value={geminiKey} onChange={e=>saveGeminiKey(e.target.value)}
             placeholder="AIza..." style={{...S.input,marginBottom:12}} autoComplete="off"/>
           <label style={S.label}>MODEL</label>
-          <input type="text" value={geminiModel} onChange={e=>saveGeminiModel(e.target.value)}
-            placeholder="gemini-2.5-flash" style={S.input} autoComplete="off"/>
+          <select value={GEMINI_MODEL_PRESETS.includes(geminiModel)?geminiModel:'custom'}
+            onChange={e=>{ if(e.target.value!=='custom')saveGeminiModel(e.target.value); }}
+            style={{...S.input,marginBottom:GEMINI_MODEL_PRESETS.includes(geminiModel)?0:8}}>
+            {GEMINI_MODEL_PRESETS.map(m=><option key={m} value={m}>{m}</option>)}
+            <option value="custom">Custom (type below)</option>
+          </select>
+          {!GEMINI_MODEL_PRESETS.includes(geminiModel)&&(
+            <input type="text" value={geminiModel} onChange={e=>saveGeminiModel(e.target.value)}
+              placeholder="custom model name" style={S.input} autoComplete="off"/>
+          )}
           <div style={{fontSize:10,color:c.textMuted,marginTop:6,lineHeight:1.5}}>
-            Default: gemini-2.5-flash. If you get a model-not-found error, check ai.google.dev for current model names —
-            gemini-2.0-flash was retired in early 2026.
+            gemini-2.5-flash is the most capable but has the lowest free-tier rate limits — if you hit a
+            rate limit, the Coach automatically retries with gemini-2.5-flash-lite once. Switch to
+            Flash Lite here directly if you're testing heavily. gemini-2.0-flash was retired in early 2026.
           </div>
         </div>
         <div style={{...S.cardBorder,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
