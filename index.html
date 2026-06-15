@@ -2309,7 +2309,10 @@ function App(){
       }catch(e){
         let msg="Something went wrong talking to Gemini.";
         if(e.message==='NO_KEY')msg='No API key set — add one in Settings.';
-        else if(/^HTTP_4/.test(e.message))msg=`Gemini rejected the request (${e.message.split(':')[0]}). Check your API key and model name in Settings.`;
+        else if(/^HTTP_429/.test(e.message))msg='Gemini rate limit hit (too many requests too fast on the free tier). Wait 30-60 seconds and try again — this is not an API key problem.';
+        else if(/^HTTP_4(01|03)/.test(e.message))msg=`Gemini rejected the request (${e.message.split(':')[0]}). Check your API key in Settings — it may be invalid or expired.`;
+        else if(/^HTTP_404/.test(e.message))msg=`Gemini rejected the request (HTTP_404). The model name in Settings may be wrong or no longer available — check ai.google.dev for current model names.`;
+        else if(/^HTTP_4/.test(e.message))msg=`Gemini rejected the request (${e.message.split(':')[0]}): ${e.message.split(':').slice(1).join(':').slice(0,150)}`;
         else if(/^HTTP_/.test(e.message))msg=`Gemini error: ${e.message.slice(0,100)}`;
         else msg=`${e.name||'Error'}: ${e.message||'unknown'} — if this says "Failed to fetch", the network request itself was blocked (often a preview/sandbox restriction — try this in your real downloaded browser, not an embedded preview).`;
         setCoachError(msg);
