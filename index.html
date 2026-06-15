@@ -1,0 +1,2608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="P1 App">
+<title>Priority1 Sales Companion</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;}
+  body{transition:background 0.2s,color 0.2s;}
+  body.dark{background:#0a0a0a;color:#fff;}
+  body.light{background:#f2f2f7;color:#111;}
+  #root{height:100%;display:flex;flex-direction:column;}
+  button{border:none;outline:none;cursor:pointer;touch-action:manipulation;font-family:inherit;}
+  button:active{opacity:0.75;transform:scale(0.98);}
+  input,textarea{font-family:inherit;}
+  .scroll{overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  .scroll::-webkit-scrollbar{width:2px;}
+  .scroll::-webkit-scrollbar-thumb{background:#333;border-radius:2px;}
+  .mono{font-family:'DM Mono','Courier New',monospace;}
+  .fade-in{animation:fadeIn 0.18s ease;}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0;}
+  th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #282828;vertical-align:top;}
+  th{font-size:10px;letter-spacing:0.08em;text-transform:uppercase;}
+</style>
+</head>
+<body class="dark">
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useMemo,useCallback,useRef} = React;
+
+// ─── STORAGE (local) ──────────────────────────────────────────────────────
+function load(k,fb){try{const r=localStorage.getItem(k);return r?JSON.parse(r):fb;}catch{return fb;}}
+function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
+
+const SK={status:'p1_status_v3',reps:'p1_reps_v2',activity:'p1_activity_v1',theme:'p1_theme',quiz:'p1_quiz',nav:'p1_nav',geminiKey:'p1_gemini_key',geminiModel:'p1_gemini_model'};
+
+// ─── THEME ────────────────────────────────────────────────────────────────
+const T={
+  dark:{bg:'#0a0a0a',surface:'#141414',surfaceHigh:'#1e1e1e',border:'#282828',
+    text:'#ffffff',textSub:'#888',textMuted:'#3a3a3a',
+    accent:'#fbbf24',accentText:'#000',navBg:'#111',cardBg:'#161616',
+    flashFront:'#141414',flashBack:'#0d1b2e',flashBorder:'#1e3a5f',
+    why:'#1c1206',whyBorder:'#3a2a08',whyText:'#d4a012',
+    blue:'#60a5fa',green:'#22c55e',red:'#ef4444',purple:'#a78bfa'},
+  light:{bg:'#f2f2f7',surface:'#ffffff',surfaceHigh:'#e8e8ed',border:'#d0d0d8',
+    text:'#111',textSub:'#666',textMuted:'#bbb',
+    accent:'#d97706',accentText:'#fff',navBg:'#fff',cardBg:'#fff',
+    flashFront:'#fff',flashBack:'#eff6ff',flashBorder:'#bfdbfe',
+    why:'#fef3c7',whyBorder:'#fde68a',whyText:'#92400e',
+    blue:'#2563eb',green:'#16a34a',red:'#dc2626',purple:'#7c3aed'},
+};
+
+const STATUS_COLOR={mastered:'#22c55e',learning:'#f59e0b',toReview:'#3b82f6',notStarted:'#6b7280'};
+const STATUS_LABEL={mastered:'Mastered',learning:'Learning',toReview:'To Review',notStarted:'Not Started'};
+
+function greeting(){
+  const h=new Date().getHours();
+  if(h<12)return'Good morning';
+  if(h<17)return'Good afternoon';
+  return'Good evening';
+}
+function shuffleArr(arr){ const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a; }
+
+// ─── MARKDOWN-LITE RENDERER ───────────────────────────────────────────────
+// Handles: ## headers, **bold**, > blockquote, - lists, | tables |, --- hr, plain paragraphs
+function MD({text,c}){
+  const lines=text.split('\n');
+  const blocks=[];
+  let i=0;
+  while(i<lines.length){
+    const line=lines[i];
+    if(line.trim()===''){i++;continue;}
+    if(line.startsWith('### ')){blocks.push({t:'h3',v:line.slice(4)});i++;continue;}
+    if(line.startsWith('## ')){blocks.push({t:'h2',v:line.slice(3)});i++;continue;}
+    if(line.startsWith('# ')){blocks.push({t:'h1',v:line.slice(2)});i++;continue;}
+    if(line.trim()==='---'){blocks.push({t:'hr'});i++;continue;}
+    if(line.startsWith('> ')||line.startsWith('>')){
+      let buf=[];
+      while(i<lines.length&&(lines[i].startsWith('>'))){buf.push(lines[i].replace(/^>\s?/,''));i++;}
+      blocks.push({t:'quote',v:buf.join('\n')});continue;
+    }
+    if(line.startsWith('|')){
+      let buf=[];
+      while(i<lines.length&&lines[i].startsWith('|')){buf.push(lines[i]);i++;}
+      blocks.push({t:'table',v:buf});continue;
+    }
+    if(line.startsWith('- ')||line.startsWith('* ')){
+      let buf=[];
+      while(i<lines.length&&(lines[i].startsWith('- ')||lines[i].startsWith('* '))){buf.push(lines[i].slice(2));i++;}
+      blocks.push({t:'ul',v:buf});continue;
+    }
+    if(/^\d+\.\s/.test(line)){
+      let buf=[];
+      while(i<lines.length&&/^\d+\.\s/.test(lines[i])){buf.push(lines[i].replace(/^\d+\.\s/,''));i++;}
+      blocks.push({t:'ol',v:buf});continue;
+    }
+    // paragraph - collect until blank line or special line
+    let buf=[line];i++;
+    while(i<lines.length&&lines[i].trim()!==''&&!/^(#|>|\||-|\*|\d+\.|---)/.test(lines[i])){buf.push(lines[i]);i++;}
+    blocks.push({t:'p',v:buf.join('\n')});
+  }
+  const inline=(str,key)=>{
+    // bold **text**
+    const parts=str.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((p,idx)=>{
+      if(p.startsWith('**')&&p.endsWith('**')) return <strong key={key+'-'+idx}>{p.slice(2,-2)}</strong>;
+      return <React.Fragment key={key+'-'+idx}>{p}</React.Fragment>;
+    });
+  };
+  return (
+    <div>
+      {blocks.map((b,idx)=>{
+        if(b.t==='h1')return <div key={idx} style={{fontSize:16,fontWeight:700,color:c.accent,marginTop:idx===0?0:16,marginBottom:6}}>{b.v}</div>;
+        if(b.t==='h2')return <div key={idx} style={{fontSize:14,fontWeight:700,color:c.text,marginTop:idx===0?0:16,marginBottom:6,borderBottom:`1px solid ${c.border}`,paddingBottom:4}}>{inline(b.v,idx)}</div>;
+        if(b.t==='h3')return <div key={idx} style={{fontSize:12,fontWeight:700,color:c.accent,letterSpacing:'0.08em',marginTop:idx===0?0:12,marginBottom:4}}>{inline(b.v,idx)}</div>;
+        if(b.t==='hr')return <div key={idx} style={{height:1,background:c.border,margin:'12px 0'}}/>;
+        if(b.t==='quote')return (
+          <div key={idx} style={{background:c.flashBack,border:`1px solid ${c.flashBorder}`,borderRadius:10,
+            padding:'10px 12px',margin:'6px 0',fontSize:12,lineHeight:1.6,whiteSpace:'pre-wrap',
+            color:c===T.dark?'#cfe0ff':'#1e3a5f'}} className="mono">{inline(b.v,idx)}</div>
+        );
+        if(b.t==='ul')return (
+          <ul key={idx} style={{margin:'4px 0 8px 18px',fontSize:12.5,lineHeight:1.6,color:c.text}}>
+            {b.v.map((li,j)=><li key={j}>{inline(li,idx+'-'+j)}</li>)}
+          </ul>
+        );
+        if(b.t==='ol')return (
+          <ol key={idx} style={{margin:'4px 0 8px 18px',fontSize:12.5,lineHeight:1.6,color:c.text}}>
+            {b.v.map((li,j)=><li key={j}>{inline(li,idx+'-'+j)}</li>)}
+          </ol>
+        );
+        if(b.t==='table'){
+          const rows=b.v.filter(r=>!/^\|[\s-:|]+\|$/.test(r))
+            .map(r=>r.split('|').slice(1,-1).map(c=>c.trim()));
+          const [head,...body]=rows;
+          return (
+            <table key={idx}>
+              <thead><tr>{head.map((h,j)=><th key={j} style={{color:c.accent}}>{h}</th>)}</tr></thead>
+              <tbody>{body.map((r,ri)=><tr key={ri}>{r.map((cell,ci)=><td key={ci} style={{color:c.text}}>{inline(cell,ri+'-'+ci)}</td>)}</tr>)}</tbody>
+            </table>
+          );
+        }
+        return <div key={idx} style={{fontSize:12.5,lineHeight:1.7,color:c.text,margin:'4px 0',whiteSpace:'pre-wrap'}}>{inline(b.v,idx)}</div>;
+      })}
+    </div>
+  );
+}
+
+// ─── CIRCULAR CHART ───────────────────────────────────────────────────────
+function CircleChart({pct,size=130,sw=10,color='#fbbf24',bg='#1e1e1e',children}){
+  const r=(size-sw)/2;
+  const circ=2*Math.PI*r;
+  const dash=(pct/100)*circ;
+  return(
+    <div style={{position:'relative',width:size,height:size,display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+      <svg width={size} height={size} style={{position:'absolute',top:0,left:0,transform:'rotate(-90deg)'}}>
+        <circle cx={size/2} cy={size/2} r={r} fill='none' stroke={bg} strokeWidth={sw}/>
+        <circle cx={size/2} cy={size/2} r={r} fill='none' stroke={color}
+          strokeWidth={sw} strokeDasharray={`${dash} ${circ-dash}`} strokeLinecap='round'
+          style={{transition:'stroke-dasharray 0.6s ease'}}/>
+      </svg>
+      <div style={{position:'relative',textAlign:'center'}}>{children}</div>
+    </div>
+  );
+}
+
+function Badge({status}){
+  const c=STATUS_COLOR[status]||'#6b7280';
+  const l=STATUS_LABEL[status]||'Not Started';
+  return(
+    <span style={{fontSize:10,fontWeight:700,letterSpacing:'0.06em',padding:'3px 9px',
+      borderRadius:20,background:`${c}22`,color:c,whiteSpace:'nowrap'}}>{l.toUpperCase()}</span>
+  );
+}
+
+// ─── ICONS ────────────────────────────────────────────────────────────────
+const Icon={
+  home:({size=22,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+    </svg>),
+  study:({size=22,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>
+    </svg>),
+  book:({size=22,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
+    </svg>),
+  journal:({size=22,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/>
+    </svg>),
+  settings:({size=22,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+    </svg>),
+  back:({size=20,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 18 9 12 15 6"/>
+    </svg>),
+  search:({size=18,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>),
+  sun:({size=18,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round">
+      <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+      <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+    </svg>),
+  moon:({size=18,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round">
+      <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+    </svg>),
+  chevron:({size=16,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>),
+  plus:({size=20,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>),
+  coach:({size=22,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3l1.9 4.5L18 9l-4.1 1.5L12 15l-1.9-4.5L6 9l4.1-1.5L12 3z"/><path d="M19 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>
+    </svg>),
+  mic:({size=22,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+    </svg>),
+  send:({size=18,color='currentColor'})=>(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+    </svg>),
+};
+const DAYS=[
+  {id:'pre', num:1, title:'Pre-Training', sub:'Foundation · 5 Cards',
+   ids:[1,2,3,4,5]},
+  {id:'wed', num:2, title:'Cold Call Basics', sub:'Wed Jun 3 · 3 Cards',
+   ids:[6,7,8]},
+  {id:'thu', num:3, title:'LTL Objections', sub:'Thu Jun 4 · 3 Cards',
+   ids:[9,10,11]},
+  {id:'fri', num:4, title:'Common Responses', sub:'Fri Jun 5 · 3 Cards',
+   ids:[12,13,14]},
+  {id:'sat', num:5, title:'Additional Responses', sub:'Sat Jun 6 · 3 Cards',
+   ids:[15,16,17]},
+  {id:'sun', num:6, title:'Pricing & FTL', sub:'Sun Jun 7 · 2 Cards',
+   ids:[18,19]},
+];
+
+const OBJ=[
+  {id:1,day:'pre',
+   name:'Happy with Current Provider',
+   trigger:'We are happy with GlobalTranz.',
+   hint:'Validate their choice, then reframe it as a comparison — not a replacement.',
+   why:'Using "better fit" rather than "better company" removes the need to defend their provider and opens the door to an honest comparison.',
+   parts:['That makes sense. GlobalTranz is a solid company. Most of my clients weren\'t unhappy with their provider either, they just found Priority1 was a better fit for their needs. I\'d like to see if that\'s true for you too. Does [day] at [time] work?']},
+
+  {id:2,day:'pre',
+   name:'All Customer Routed',
+   trigger:'We are all customer routed.',
+   hint:'Find the percentage first — there\'s almost always a gap below 100%.',
+   why:'Percentage forces acknowledgment of partial control. The expedited scenario targets a pain point almost every shipper has scrambled to cover.',
+   parts:[
+     'What percentage of your freight is customer routed?\n→ If under 100%: qualify the remaining %',
+     'I completely understand. Is there ever a time when something falls short, and you\'re held responsible for managing the freight? Maybe, an expedited shipment?']},
+
+  {id:3,day:'pre',
+   name:'Send an Email',
+   trigger:'Just send me an email with your company info/services.',
+   hint:'Agree you\'ll send it — then flip the script. Context makes the email relevant.',
+   why:'Agreeing first removes resistance. Positioning context as helping them (not you) turns their request back into a reason for a brief call.',
+   parts:['I completely understand — happy to send something over. Typically though, without a little context around your process, those emails don\'t end up being very relevant to you. That\'s why I wanted to connect briefly first so I can tailor it to what actually matters on your end. Does tomorrow at 2pm work?']},
+
+  {id:4,day:'pre',
+   name:'Not Interested — DM',
+   trigger:'We\'re good / We\'re all set / Not interested / We have no reason to change. (DM)',
+   hint:'Ask them to define "working well." Vague satisfaction is harder to defend than specific value.',
+   why:'Once they articulate what they\'d lose by switching, you can respond to the actual objection instead of a generic brush-off.',
+   parts:[
+     'I hear you — what about your current process is working so well that you wouldn\'t want to explore other options?',
+     '→ If they say "no reason to change":\nI understand — it sounds like what you have is working. A lot of the companies we partner with said the same thing before taking a closer look at our operations and costs. Let me show you what we do differently. Worst case, you validate your current setup. Does tomorrow at 2pm work?']},
+
+  {id:5,day:'pre',
+   name:'Not Interested — Lower Level',
+   trigger:'We\'re good / Not interested. (Lower level / gatekeeper)',
+   hint:'Don\'t try to sell them. Remove all pressure, acknowledge, then ask your next qualifying question.',
+   why:'Gatekeepers aren\'t paid to be sold to. Agreeing to "just learn" eliminates their job of blocking you.',
+   parts:['I get that, I\'m not asking you guys to make a change today, just looking to learn more about how you guys operate.\n\n[Insert next qualifying question]']},
+
+  {id:6,day:'wed',
+   name:'No Time',
+   trigger:'I have absolutely no time to deal with freight right now.',
+   hint:'Being busy is exactly why you called. One meeting is all it takes.',
+   why:'Busyness is a buying signal, not a barrier. Busy companies are exactly who freight management helps — the math (small time vs potential savings) does the selling.',
+   parts:['I get it — That\'s actually why I reached out, many of our customers were in the same spot but found we helped save them time and money. I\'m only asking for one meeting to see if that could be true for you too. Does [day] at [time] work?']},
+
+  {id:7,day:'wed',
+   name:'Pass Down',
+   trigger:'Can you talk with Mike? He actually handles all the freight.',
+   hint:'Ask if Mike can switch without their approval before you accept the pass.',
+   why:'The approval question reveals where real power lies. If Mike needs sign-off, the person you\'re talking to is still a decision maker — and they know it.',
+   parts:[
+     'I can definitely do that, but does Mike have the ability to SWITCH to Priority1 without your approval?',
+     '→ If DM says YES:\nI\'m confident Priority1 can save you time and money, and I\'m sure those are aspects you both find valuable. Could you please transfer me over to Mike so I can introduce myself and let him know we\'ve spoken?',
+     '→ If DM says NO:\nI know Mike handles the day-to-day freight. Since you oversee the bigger picture, you\'re in the best position to see how changes in freight can affect your supply chain and costs. I\'d like to set up a meeting to discuss further. Does [day] at [time] work?']},
+
+  {id:8,day:'wed',
+   name:'Invoice Objection',
+   trigger:'I never show invoices.',
+   hint:'Three options — pick based on who you\'re talking to. All end the same way.',
+   why:'Three entry points target different owner types: analytical (verification), cost-focused (comparison), skeptical (bill audit). Choose based on what resonated earlier in the call.',
+   parts:[
+     'OPTION 1 — Verify setup:\nI completely understand what you\'re saying. The reason I need to see your invoices is to verify volume and destinations. Not to mention it helps me understand how you are set up with your current vendor. Can you make sure to send those to me?',
+     'OPTION 2 — Cost comparison:\nI hear you [owner\'s name]. Invoices will allow me to put together a true cost comparison or "apples to apples" comparison against your current provider. I am very confident I can help you out financially. Can you make sure to send those to me?',
+     'OPTION 3 — Freight bill audit:\nI completely understand what you are saying. One of the most important value ads we offer is the freight bill audit. The freight industry is known for quoting one amount and billing something else. More than half of my current customers didn\'t know they had a billing issue before they made the switch over to Priority1. Give me a chance to look at your bills to ensure this isn\'t happening to your company. Can you make sure to send those to me?']},
+
+  {id:9,day:'thu',
+   name:'Won\'t Use a Broker LTL',
+   trigger:'We had a bad experience in the past with a broker.',
+   hint:'Ask what happened and let them talk. Their complaint tells you which P1 differentiator to lead with.',
+   why:'Open questions remove defensiveness and give you specific ammunition. Their exact complaint tells you exactly how to position P1 as different.',
+   parts:[
+     'Open Ended Question Method:\na. Can you tell me a little more about what happened?\n   → Let them talk. Use this info to explain how P1 is different/better.',
+     'b. Push to set up a meeting with your supervisor to discuss how you can rectify the situation.']},
+
+  {id:10,day:'thu',
+   name:'Bad Experience (with Priority1)',
+   trigger:'We had a bad experience with Priority1.',
+   hint:'Ask when and what happened. Let them vent. Then separate yourself — you can only speak to your own work ethic.',
+   why:'Acknowledging the failure eliminates the company-defense reflex. Shifting to personal accountability gives them a new person to evaluate, not an old failure to relitigate.',
+   parts:[
+     'a. How long ago was this?',
+     'b. Can you tell me a little more about what happened?\n   → Let them talk. Use this to explain how you will be different/better.',
+     'c. Push to set up a meeting with your supervisor to see how we can win back their business.']},
+
+  {id:11,day:'thu',
+   name:'Eggs in One Basket LTL',
+   trigger:'I don\'t want to put all my eggs in one basket.',
+   hint:'Validate the logic, then flip it — multiple 3PLs can actually reduce buying power.',
+   why:'One cost analysis is low-risk with high upside. They\'re not committing to anything — just looking at numbers. Hard to say no to that.',
+   parts:['I hear you — spreading shipments across multiple carriers makes sense. That\'s actually why many of the companies I work with start by letting us run the numbers first — sometimes using multiple carriers or 3PLs can reduce buying power and increase costs. I\'m just asking for one meeting to run a free cost analysis and see if that might be the case for you too. Does [day] at [time] work?']},
+
+  {id:12,day:'fri',
+   name:'We Have Our Own Trucks',
+   trigger:'We just use our own fleet of trucks.',
+   hint:'One question: is there ever a time they don\'t have enough capacity?',
+   why:'No fleet runs at 100% capacity 100% of the time. This question targets a real gap every private fleet has but often doesn\'t think of as a freight problem.',
+   parts:['Got it. Is there ever a time when you don\'t have capacity within your own fleet and have to outsource to a broker or another company like Priority1?']},
+
+  {id:13,day:'fri',
+   name:'Honeymoon',
+   trigger:'We just made a change.',
+   hint:'Validate the fresh change — then use it as the reason to look. 30 days of invoices is all you need.',
+   why:'The new relationship means they\'re already in evaluation mode. Running numbers now captures the comparison window before loyalty to the new provider builds.',
+   parts:['I hear you — you just made a change, and no one wants to go through that process again. That\'s actually why a lot of companies in the same spot let us run a free cost analysis — there might be opportunities your current provider can\'t offer. All I\'d need from you are the last 30 days of invoices, and we can review the results together to see if it makes sense. Does [day] at [time] work?']},
+
+  {id:14,day:'fri',
+   name:'Contract Objection LTL',
+   trigger:'We are in a contract.',
+   hint:'Contracts feel like walls but most are volume-based with a 30-day out clause.',
+   why:'Most shippers don\'t know their freight contracts have 30-day notice exits until someone tells them. That information alone makes the call worth having.',
+   parts:['I hear you — being in a contract can make things tricky. That\'s actually why most of the companies I work with start by having a quick conversation — many freight contracts are volume-based, and you can often make changes with just a 30-day notice. I\'m only asking for a short call to go over your options. Does [day] at [time] work?']},
+
+  {id:15,day:'sat',
+   name:'Won\'t Use a Broker LTL — Additional',
+   trigger:'We had a bad experience in the past with a broker. (additional response)',
+   hint:'More direct. Peer validation — other customers with the same experience gave P1 a shot.',
+   why:'If other companies with the same concern gave P1 a shot, the customer\'s resistance starts to look like the exception rather than the rule.',
+   parts:['Yeah, I get that — Some of my current customers were in the same boat before and that\'s actually why they gave us a shot — we approach freight differently and have helped them save time and money. I\'m only asking for one meeting to see if that might be true for you too. Does [day] at [time] work?']},
+
+  {id:16,day:'sat',
+   name:'Bad Experience — Additional (Priority1)',
+   trigger:'We had a bad experience with Priority1. (additional response)',
+   hint:'Apologize on behalf of P1, then separate yourself. Show you\'re not afraid of what happened.',
+   why:'Asking to hear the story signals confidence. You\'re not defending P1 — you\'re offering to fix it. That\'s a fundamentally different posture.',
+   parts:['I completely understand how you feel. I don\'t know what happened in the past, but I want to apologize on behalf of Priority1 for that bad experience. I can only speak on behalf of my own work ethic and transparency when it comes to resolving issues for my clients. Let\'s do this, I\'d like to learn a little more about what happened and show you why this time it will be different. Does [day] at [time] work?']},
+
+  {id:17,day:'sat',
+   name:'No More Providers',
+   trigger:'We\'re not adding anymore providers. (FTL)',
+   hint:'You\'re not replacing anyone — you fill a gap in their network.',
+   why:'"Gap filler" language positions P1 as additive, not competitive. You\'re complementing their existing relationships, not creating conflict.',
+   parts:['That makes sense — Having a network of providers is great. Many of my clients weren\'t unhappy with their providers, they just found Priority1 could fill a gap in that network. I\'d like to see if that\'s true for you too. Does [day] at [time] work?']},
+
+  {id:18,day:'sun',
+   name:'BID / RFP / RFQ',
+   trigger:'We have an annual/quarterly bid you would have to participate in to work with us. (FTL)',
+   hint:'Four questions in sequence — get added, new lanes, spot market, then set a follow-up.',
+   why:'Each question moves closer to getting a load. Spot market opportunity creates a path to earning business before the bid even opens.',
+   parts:[
+     '1. How can I be added?',
+     '2. How do you handle new lanes that come up throughout the year?',
+     '3. Do you have a spot market opportunity I could have a shot at?',
+     '4. Set expectation that you would love to meet or follow up again to learn more about the bid.']},
+
+  {id:19,day:'sun',
+   name:'Budget / Won\'t Give Their Price',
+   trigger:'Just give me your best rate. (Truckload)',
+   hint:'Ask for their target rate first. If they won\'t give one, use High-Low.',
+   why:'A target rate creates a shared goal — you and the carrier negotiate together. High-Low anchors on your terms while letting the customer feel they won something.',
+   parts:[
+     'To get you the best rate, I\'ll need a price point to aim for. Having that target shows carriers we\'re serious and helps us negotiate better. What rate should I tell them you\'re looking for?',
+     '→ If unsuccessful: HIGH-LOW APPROACH\n"My team just got our first option for $[X]. Do you want me to lock it in?"\n→ DM counters with lower number\n"Good thing I checked. If I can match at $[their #], can we move this for you?"\n→ Come back 15–30 min later at/near their number and lock it.']},
+];
+
+function parsePart(str,i,total){
+  const opt=str.match(/^(OPTION \d+ [^\n:]+):\n([\s\S]+)/);
+  if(opt)return{label:opt[1].toUpperCase(),text:opt[2].trim()};
+  const iff=str.match(/^(→ If [^\n]+)\n([\s\S]+)/);
+  if(iff)return{label:iff[1].replace('→ ','').toUpperCase(),text:iff[2].trim()};
+  return{label:total===1?'RESPONSE':`PART ${i+1} OF ${total}`,text:str};
+}
+
+// ─── REFERENCE DATA: GLOSSARY ─────────────────────────────────────────────
+const GLOSSARY=[
+  {term:'Linehaul',section:'Core Concepts',def:'The transportation charge from point A to B. In LTL it\'s the terminal-to-terminal movement; in truckload it\'s often the whole charge. Some carriers fold accessorials (like tarp charges) into the linehaul number instead of breaking them out.'},
+  {term:'Backhaul / Backhaul Freight',section:'Core Concepts',def:'A return load after a delivery (e.g. Phoenix→Denver, then Denver→Phoenix). Carriers often discount these — something is better than deadheading.'},
+  {term:'Deadhead',section:'Core Concepts',def:'When a truck drives empty to reposition for its next load. Carriers avoid this — the reason behind backhaul discounts.'},
+  {term:'Dedicated Freight',section:'Core Concepts',def:'Trucks essentially assigned to a customer on a recurring lane (e.g. 3 trucks dedicated to a weekly Chicago→Dallas run). Hard to displace.'},
+  {term:'Contract Carrier',section:'Core Concepts',def:'A carrier with a signed agreement guaranteeing them a % of a lane for a set period (e.g. 80% of a lane for 12 months). Harder to win business away from.'},
+  {term:'Spot Freight / Spot Market',section:'Core Concepts',def:'Freight not under contract — priced on current supply/demand for that lane at that time. Rates swing week to week.'},
+  {term:'Partial Truckload',section:'Core Concepts',def:'Bigger than LTL (~6-18 pallets) but not a full trailer. Runs like mini-FTL — one driver, direct, priced per mile. More reliable than Volume LTL, costs more.'},
+  {term:'Full Truckload (FTL)',section:'Core Concepts',def:'Customer gets the whole trailer. One driver, direct, no terminal stops, no shared space.'},
+  {term:'Live Load',section:'Core Concepts',def:'Driver waits at the shipper\'s dock while freight is loaded, then drives off with it.'},
+  {term:'Drop Trailer',section:'Core Concepts',def:'Carrier drops an empty trailer ahead of time; shipper loads on their own schedule, carrier picks up loaded trailer later.'},
+  {term:'Live Offload',section:'Core Concepts',def:'Driver waits at the receiver\'s dock while freight is unloaded, then leaves with the empty trailer.'},
+  {term:'Transload',section:'Core Concepts',def:'Freight moved from one mode/container to another at a facility — e.g. unloading an ocean container and reloading onto a domestic truck. Common in drayage/imports.'},
+  {term:'LFD — Last Free Day',section:'Core Concepts',def:'In drayage/imports, the last day a container can sit at port/rail before demurrage (storage fees) kick in.'},
+  {term:'ERD — Earliest Receiving Date',section:'Core Concepts',def:'In drayage/exports, the earliest date the port/terminal accepts an export container for vessel loading.'},
+  {term:'Cutoff',section:'Core Concepts',def:'In drayage/exports, the deadline for a container to arrive at port to make a specific vessel/sailing.'},
+  {term:'Terminal',section:'LTL Operations',def:'A local carrier facility handling pickups, deliveries, and sorting for its service area.'},
+  {term:'P&D (Pickup and Delivery)',section:'LTL Operations',def:'Local operations within a terminal\'s service area. Deliveries are loaded first each morning (revenue priority), pickups run in the afternoon (~1-2PM start).'},
+  {term:'Line Haul (LTL)',section:'LTL Operations',def:'Long-distance transport between terminals, typically overnight using double/triple trailers. Freight may pass through 1-5 intermediate terminals.'},
+  {term:'BOL (Bill of Lading)',section:'LTL Operations',def:'The foundational shipping document for any LTL shipment.'},
+  {term:'PRO Number',section:'LTL Operations',def:'Tracking number generated when a driver scans the shipment barcode — how LTL freight is tracked terminal-to-terminal.'},
+  {term:'POD (Proof of Delivery)',section:'LTL Operations',def:'Signed delivery receipt required before a carrier gets paid.'},
+  {term:'Hub and Spoke',section:'LTL Operations',def:'The LTL network model: freight moves spoke→hub→spoke via line haul. Why LTL transit is "never guaranteed" — multiple touches = variability.'},
+  {term:'Liftgate',section:'LTL Accessorials',def:'Helps offload freight at locations without a loading dock.'},
+  {term:'Limited Access',section:'LTL Accessorials',def:'Locations with restricted access, or only accessible by smaller vehicles.'},
+  {term:'Residential',section:'LTL Accessorials',def:'Delivery to a home/private residence. Must book with liftgate unless stated otherwise; includes delivery appointment.'},
+  {term:'Delivery Appointment',section:'LTL Accessorials',def:'LTL carriers won\'t deliver at a specific time unless booked with this accessorial.'},
+  {term:'Notify Consignee',section:'LTL Accessorials',def:'The receiver is notified their freight is out for delivery.'},
+  {term:'Inside Delivery',section:'LTL Accessorials',def:'Freight delivered inside the door rather than curb/dock. Debris removal NOT included.'},
+  {term:'Hazmat',section:'LTL Accessorials',def:'Transportation of hazardous materials requiring a hazard class/division label.'},
+  {term:'Overlength',section:'LTL Accessorials',def:'Shipment exceeds a carrier\'s length limit (~8ft/96"). CABO calculates this automatically.'},
+  {term:'Tradeshow Delivery',section:'LTL Accessorials',def:'LTL shipments to a tradeshow must be booked with this accessorial AND correct freight class, or it triggers a variance.'},
+  {term:'Detention (Truckload)',section:'Truckload Accessorials',def:'Drivers get 2 hrs free to load/unload, then detention kicks in. Customer rate $50/hr, carrier rate $35/hr.'},
+  {term:'TONU (Truck Order Not Used)',section:'Truckload Accessorials',def:'Driver is en route/arrived and told they\'re no longer needed. Customer $150-250, carrier $150.'},
+  {term:'Layover',section:'Truckload Accessorials',def:'Driver arrives to pick up and the load isn\'t ready — must wait until next day. Customer $150-250, carrier $150.'},
+  {term:'Stop Off',section:'Truckload Accessorials',def:'Driver makes multiple stops (e.g. 1 pickup, 2 deliveries). Customer $75, carrier $50.'},
+  {term:'Driver Assist / Unload',section:'Truckload Accessorials',def:'Shipper or receiver needs help loading/unloading. Priced per occurrence.'},
+  {term:'Chassis',section:'Drayage Accessorials',def:'What the container sits on — usually a 2-3 day minimum charge.'},
+  {term:'Chassis Split',section:'Drayage Accessorials',def:'Container isn\'t in the same location as the chassis; carrier charges to bring chassis to container.'},
+  {term:'Triaxle',section:'Drayage Accessorials',def:'Chassis built for an overweight 20ft container.'},
+  {term:'Detention (Drayage)',section:'Drayage Accessorials',def:'Shipper holds equipment past free time, typically outside the port.'},
+  {term:'Pre-Pull',section:'Drayage Accessorials',def:'Carrier pulls the container from port early, stores in their yard — helps customer avoid port demurrage.'},
+  {term:'Storage (Drayage)',section:'Drayage Accessorials',def:'Carrier must store the shipper\'s delivery — charged per day/hour.'},
+  {term:'Overweight (Drayage)',section:'Drayage Accessorials',def:'Container exceeds legal weight limit — permit/overweight fees apply.'},
+  {term:'Congestion',section:'Drayage Accessorials',def:'Port is backed up, takes longer to load — carrier charges for the delay.'},
+  {term:'Dry Run',section:'Drayage Accessorials',def:'Carrier shows up to deliver/pick up as scheduled and is unable to.'},
+  {term:'Drop Fee / Bobtail Fee',section:'Drayage Accessorials',def:'Carrier drops the container at the warehouse, picks up later (instead of live load) — happens when product can\'t be unloaded quickly.'},
+  {term:'Dry Van',section:'Equipment',def:'Standard enclosed 53ft trailer. Most common mode — anything not needing special temp/flatbed/expedited moves dry van. ~44-45k lbs usable.'},
+  {term:'Flatbed',section:'Equipment',def:'Open trailer for side-loaded freight. 48ft typical, 48,000 lb max. Low liability, usually not palletized.'},
+  {term:'Tarps',section:'Equipment',def:'Sizes 4ft (most common), 6ft, 8ft — refers to tallest point of load. All run the trailer length (~48ft).'},
+  {term:'TWIC Card',section:'Equipment',def:'Government card giving drivers access to secure port areas.'},
+  {term:'Dunnage',section:'Equipment',def:'Wood pieces between pipes/products to keep them secure in transit.'},
+  {term:'PPE',section:'Equipment',def:'Personal Protective Equipment, required at sites with bodily-harm hazards.'},
+  {term:'Hot Shot / Gooseneck',section:'Equipment',def:'Smaller flatbed, 20-40ft (usually 40), max 18,500 lbs. Good GP if competitors don\'t think to quote it. Regionally can also mean "expedited" — clarify.'},
+  {term:'Removable Gooseneck (RGN)',section:'Equipment',def:'For low/heavy loads needing front-ramp loading.'},
+  {term:'Double Drop / Low Boy',section:'Equipment',def:'For extra-tall or heavy equipment.'},
+  {term:'Step Deck',section:'Equipment',def:'For freight too tall for standard flatbed but not needing a full lowboy.'},
+  {term:'Conestoga',section:'Equipment',def:'Flatbed with a rolling tarp system — better weather protection.'},
+  {term:'Reefer',section:'Equipment',def:'53ft refrigerated trailer, 45,000 lb max, palletized. Also available as temp-controlled sprinter vans and box trucks.'},
+  {term:'Sprinter Van',section:'Equipment',def:'Up to 3,500 lbs, 172"x52"x72", 3 standard pallets (non-stackable).'},
+  {term:'Box / Straight Truck',section:'Equipment',def:'20-26ft, up to 9-10k lbs, 96"x96", 12 standard pallets (non-stackable).'},
+  {term:'Standard Container',section:'Containers',def:'20ft, max 38,000 lbs.'},
+  {term:'High Cube Container',section:'Containers',def:'40-45ft, max 44,000 lbs.'},
+  {term:'Flatrack',section:'Containers',def:'Open-sided container for oversized/heavy cargo.'},
+  {term:'Open Top',section:'Containers',def:'Container with removable top for tall cargo.'},
+  {term:'Carrier Rules Tariffs',section:'Pricing Terms',def:'Each carrier\'s rulebook governing additional charges, packaging requirements, re-weigh/reclass criteria, appointment fees. Varies by carrier.'},
+  {term:'Linear Foot Rules',section:'Pricing Terms',def:'Measures trailer space (front-to-back) a shipment occupies. CABO has these built in and alerts if a shipment breaks a carrier\'s rule.'},
+  {term:'Enterprise Pricing',section:'Pricing Terms',def:'Customer-specific blanket pricing, generally for accounts doing >$40,000 GP/month. Negotiated by vendor relations.'},
+  {term:'Freight Class / NMFC',section:'Pricing Terms',def:'LTL pricing is based on freight class, determined by the NMFC code for the commodity. Never book LTL without an NMFC — look it up via Class-It.'},
+  {term:'CABO',section:'Acronyms',def:'Priority1\'s TMS — quoting, booking, tracking, address book, commodities list, all in one place.'},
+  {term:'PLACCED',section:'Acronyms',def:'Pricing, Logins, Address book, Commodity, CABO preferences, E-portal, Distro email — the 25-step LTL self-booker setup process.'},
+  {term:'MVPCC',section:'Acronyms',def:'Mode, Volume, Product/Commodity, Competitor, Competitor\'s decision process — the qualifying-question framework. See Scripts.'},
+  {term:'IBS',section:'Acronyms',def:'Initial Benefit Statement — the part of the script stating who you are and why you\'re calling, tailored to what you\'ve learned.'},
+  {term:'TMS',section:'Acronyms',def:'Transportation Management System — generic term. CABO is Priority1\'s TMS.'},
+  {term:'CSP',section:'Acronyms',def:'Enterprise onboarding track: Data Received → Blanket Comparison → Credit App → LOA Signed → Bid Submitted → Pricing Published → Shipping.'},
+  {term:'LOA',section:'Acronyms',def:'Letter of Authorization — signed during CSP/Enterprise onboarding.'},
+  {term:'DM',section:'Acronyms',def:'Decision Maker — the person who actually chose/can change the freight provider, not necessarily who handles day-to-day freight.'},
+  {term:'GP',section:'Acronyms',def:'Gross Profit — sell price minus carrier cost.'},
+  {term:'FFBA',section:'Acronyms',def:'⚠️ Referenced in training (Finding Value step) but not yet confirmed from an official source. Likely "Feature, Function, Benefit, Application" — confirm with supervisor.'},
+];
+const GLOSSARY_SECTIONS=[...new Set(GLOSSARY.map(g=>g.section))];
+
+// ─── REFERENCE DATA: FREIGHT MODES ────────────────────────────────────────
+const MODES=[
+{id:'ltl',name:'LTL',md:`## LTL (Less Than Truckload)
+
+**What it is:** The "flying coach" of freight — your shipment shares trailer space with other shippers. Multiple drivers touch it (local pickup → line haul → local delivery) via the hub-and-spoke network.
+
+**When customers use it:** 1-6 pallets, doesn't need a dedicated truck.
+
+**Why it's never guaranteed:** Multiple terminal touches = estimated, not guaranteed, transit times.
+
+**Support:** insidesalesltl@priority1.com (quoting/booking/tracking) | claims@priority1.com | enterprise@priority1inc.com
+**Escalation:** Forrest Goss (Director of LTL Support) | Will Sison (VP of Pricing)
+
+**5 data points support needs for fast quotes:** origin zip, destination zip, pallet count, dimensions (LxWxH), weight, commodity description.
+
+### Common New-Rep Mistakes
+- Never sell against FedEx *direct* the same way as FedEx-via-broker — different competitive dynamic.
+- Don't book without an NMFC code — look it up, don't guess.
+- "Standard pallet" is never a complete dimension answer.`},
+
+{id:'volltl',name:'Volume LTL & Partial TL',md:`## Volume LTL & Partial Truckload
+
+**The 6+ pallet decision** — too big for regular LTL, won't fill a truck:
+
+| | Volume LTL | Partial Truckload |
+|---|---|---|
+| What it is | "Market rate" for LTL carrier to move 6+ pallets | Cheaper via truckload network |
+| Network | LTL (hub-and-spoke) | Truckload (one driver, direct) |
+| Damage risk | Higher (more handling) | Lower (fewer touches) |
+| Transit | Estimated | More predictable |
+| Cost | Cheaper | More expensive |
+
+**How to position it:** Get quotes for BOTH and let the customer choose — cost (Volume LTL) vs. reliability (Partial TL).`},
+
+{id:'dryvan',name:'Dry Van / FTL',md:`## Dry Van / Full Truckload (FTL)
+
+**What it is:** Standard enclosed 53ft trailer. Customer gets the whole trailer — one driver, direct, no terminal stops.
+
+**Fast stats:** 53ft typical, ~44-45k lbs usable, avg cost $800-$5,000+, moderate liability, typically palletized.
+
+### Support Contact (by office)
+| Office | Email |
+|---|---|
+| Little Rock | insidesaleslyons@priority1.com |
+| Phoenix | insidesalesPHX@priority1.com |
+| Greenville | greenville@priority1.com |
+| Knoxville | knoxville@priority1.com |
+| Montreal | canrate@priority1.com |
+
+**Escalation:** Matt Watson, Director of Dry Van Operations
+
+**Pricing factors:** supply & demand on the lane, weather, time of day/month (month-end often higher), special requirements (hazmat, tanker endorsement, specialized equipment).`},
+
+{id:'flatbed',name:'Flatbed',md:`## Flatbed
+
+**What it is:** Open trailer for anything that has to be side-loaded.
+
+**Fast stats:** 48ft typical, 48,000 lb max, LOW liability, NOT usually palletized, avg cost $800-$7,000+. Equipment: tarps, chains, dunnage. Driver requirements: PPE & TWIC.
+
+**Can offer Partial Truckload if 500+ miles.**
+
+**Common industries:** Construction, Oil & Gas, Oversized Equipment, Wire & Cable.
+
+**Hot Shot/Gooseneck:** smaller flatbed (20-40ft, max 18,500 lbs). Good GP opportunity. Regionally "hotshot" can mean expedited — clarify.
+
+**Oversized loads:** Yes — get exact dims & weight, flatbed team quotes permit price + linehaul.
+
+**Support:** flatbed@priority1.com — include weight, dimensions, loading plan.
+**Escalation:** Matt Luehring, Director of Flatbed Operations
+
+### Real Example
+Burr Ridge, IL → Rochester, NY, 610mi, quoted $3,850 (~$6.31/mi) vs customer's $3/mi expectation. See Journal/Case Studies.`},
+
+{id:'temp',name:'Temp-Controlled (Reefer)',md:`## Temperature-Controlled (Reefer)
+
+**What it is:** Only option when product must be held to a specific temperature.
+
+**Fast stats:** 53ft typical, 45,000 lb max, palletized, avg cost $900-$7,000+. Also available as temp-controlled sprinter vans/box trucks.
+
+**Common industries:** Pharmaceuticals, Meat, Flowers, Medical Supplies.
+
+**Support:** tempcontrolled@priority1.com — include commodity AND exact temperature.
+**Escalation:** Chea Peterman, Manager of Carrier Procurement
+
+### The Big Selling Point
+Dry LTL's "Protect from Freeze" accessorial is, per the VP of LTL, **"a blanket and a prayer"** — voided by weather delays. A true temp-controlled trailer is the ONLY real protection. Target customers who STOP shipping seasonally instead of switching modes.
+
+### Common New-Rep Mistakes
+- "Standard pallet" is not a real answer — confirm L×W×H every time.
+- Never accept vague temps ("frozen," "chilled," "ambient") — get the exact temperature or range.
+- If total value is over $100k, confirm for insurance.
+
+### Real Example
+Global Foods Group — reefer LTL + FTL, -10°F deep frozen. See Journal/Case Studies.`},
+
+{id:'expedited',name:'Expedited',md:`## Expedited
+
+**What it is:** For time-sensitive or very expensive/small shipments — safest, guaranteed-delivery option. Price usually isn't the main concern. Regionally called "hotshot."
+
+**Fast stats:**
+| Vehicle | Size | Max Weight |
+|---|---|---|
+| Sprinter Van | 96"-172" | 3,000 lbs |
+| Box/Straight Truck | 16-26ft | 9,500 lbs |
+
+Avg cost: $1,500+.
+
+**Common industries:** Aerospace, Oil & Gas, Manufacturing, "Line Down," Fragile & High Value.
+
+**When to lead with it:** high-value single-truck freight, medical/pharma with tracking requirements, custom products avoiding terminal handling, claims-history customers (<0.5% claims rate).
+
+**Discovery questions:**
+- "Who handles your expedited shipping?"
+- "Do you run sprinter vans and box trucks?"
+- Frequency? Current carriers (Load One, CH Robinson, TQL)? Cheapest rate vs closest truck?
+
+**Support:** expedited@priority1.com — include pickup/delivery zip, pallet count, weight/pallet, dimensions, dates.
+**Escalation:** Jimmy Anderson, Director of Expedited Operations`},
+
+{id:'drayage',name:'Drayage',md:`## Drayage
+
+**What it is:** Moving a container to/from a port to a shipper/receiver/warehouse for transload onto over-the-road transport. The U.S. is primarily an import market — drayage is the connector.
+
+**Fast stats:**
+| Container | Size | Max Weight |
+|---|---|---|
+| Standard | 20ft | 38,000 lbs |
+| High Cube | 40-45ft | 44,000 lbs |
+
+Can be reefer or hazmat. Other types: Flatrack (oversized), Open Top (tall cargo).
+
+**Common industries:** Seafood, Furniture, Household Goods, Machinery.
+
+**Support:** drayage@priority1.com. Note: team contacts the ports directly for quotes — response may not be immediate.
+**Escalation:** Brad Maxwell, Director of Drayage Operations`},
+
+{id:'cabotage',name:'Cabotage',md:`## Cabotage — When To Pivot Here Instead
+
+**What it is:** Priority1's SaaS offering (Cabo FM) — a TMS giving clients access to Priority1's negotiated carrier rates, but the CLIENT manages bids/carriers themselves (not Priority1's brokerage).
+
+**Best practice:** Quote BOTH the brokerage AND Cabotage option, let the customer decide. Cabotage carries less liability since the customer separates pallets at terminals themselves.
+
+**Who it's for:** Large customers (100+ truckload shippers) wanting large carrier access without giving up control of freight management.
+
+**How do I know which to sell?** Always sell all-in brokerage unless you consult your supervisor/manager/director on a large deal. Don't decide this alone.`},
+];
+
+// ─── REFERENCE DATA: VALUE ADDS ────────────────────────────────────────────
+const VALUEADDS=[
+{id:'universal',name:'Universal / CABO',md:`## Universal (CABO / TMS)
+*Applies to LTL and works alongside every mode*
+
+| Feature | What It Does | Why It Matters |
+|---|---|---|
+| CABO (TMS) | Quote, book, track shipments in one platform | Keeps everything in one place, saves time |
+| Address Book | Save addresses in CABO | Speeds up booking, avoids re-entry |
+| Commodities List | Save products, NMFC codes, freight classes | Faster, more accurate quoting/booking |
+| Shipping & Handling Fee | Auto-adds upcharge if customer bills their own customers | Consistent pricing, captures freight costs |
+| Freight Profitability Tracker | Tracks profitability when S&H fee is on | Shows customers their margin on freight |
+| Collect Shipments | Customer books for their own customers; carrier bills them directly | Easy collect shipment management |
+| Auto Tracking Updates | Automatic email updates on shipment location | Keeps customers informed, no manual checking |
+| Per-Shipment Tracking | Choose tracking updates per shipment | Flexibility |
+| Daily Shipment Report | Daily email with last location of all open loads | Stay current on all active shipments |
+| Carrier Network | Regional + national LTL carriers | Strong coverage, reliable capacity |
+| Tier-One Pricing | Top-tier carrier pricing (P1 pays fast) | Competitive rates passed to customer |
+| Free Freight Bill Audit | Team checks every LTL invoice for errors | Customers dispute incorrect charges, save money |
+| LTL Claims Support | Claims team files damage claims on customer's behalf | Saves time, claims handled correctly |
+
+### Elevator Pitch Language (your notes, not verbatim script)
+
+**CABO:** "Our Cabo TMS helps companies simplify freight management — quoting, tracking, analytics, invoicing, carrier management all in one platform. Compare rates/transit times across carriers, generate BOLs instantly, track in real time, manage user permissions by department. One centralized hub that saves time, improves visibility, helps faster shipping decisions."
+
+**Address Book:** "Gives customers a centralized system to manage shipping contacts and locations. Quick access to saved addresses, permissions by department, streamlines quoting and coordination — reduces manual entry and errors."
+
+**Commodities:** "Stores commonly shipped products, classifications, and freight info in one place. Quickly select pre-saved commodities by NMFC code to speed up quoting, reduce errors, improve consistency."
+
+**Collect Shipment:** "Instead of managing multiple carrier logins to book collect shipments for your customer, book those directly through our website."
+
+**Track Shipment:** "Real-time visibility throughout shipping. Select multiple emails/phones for specific notifications — booked, picked up, delivered, POD, exception. Search by reference number."`},
+
+{id:'ftl',name:'FTL (Dry Van/Flatbed/Temp)',md:`## FTL (Dry Van, Flatbed, Temp-Controlled)
+
+| Feature | What It Does | Why It Matters |
+|---|---|---|
+| 50,000+ Vetted Carriers | Carefully vetted network across the U.S. | Trusted carriers always available nationwide |
+| Dedicated Support Team | Each TL team has its own communication/tracking group | Personal support, not a call center |
+| Cargo Insurance | Up to $100,000 standard, more available | Protects freight value, flexible coverage |
+| Trucker Tools | Real-time tracking on truck location | Everyone knows where shipments are |
+| Strict Vetting Process | All carriers go through approval before joining | Only safe, reliable carriers move freight |
+| Digital Pricing in CABO | Quote and book truckloads directly in CABO | Faster booking, instant pricing |`},
+
+{id:'exp',name:'Expedited',md:`## Expedited
+
+| Feature | What It Does | Why It Matters |
+|---|---|---|
+| Sylectus (Exclusive Access) | Load board access to 30,000+ live trucks | Competitive advantage — find trucks faster |
+| Live Truck Quoting | Quote with a live truck within 30 min, major markets | Fast, accurate, real-time-based quotes |
+| Same-Day Coverage | Find/book same-day expedited loads anywhere in U.S. | Urgent shipments covered and moved quickly |
+| Real-Time Tracking | Live visibility on every load | Customers always know where the load is |
+| Top-Tier Service | ~99% on-time delivery | Builds trust with time-reliant customers |
+| Low Claims Rate | <0.5% claims vs typical freight | Strong hook for claims-history customers |`},
+
+{id:'temp_va',name:'Temp-Controlled',md:`## Temp-Controlled
+
+| Feature | What It Does | Why It Matters |
+|---|---|---|
+| True Temp-Controlled Trailer | Actual reefer maintains set temp range | The ONLY real protection (vs "blanket and a prayer") |
+| Trucker Tools Tracking | 95% tracking rate dept-wide, direct link to truck location | Fewer check-in calls |
+| Tive Tracking Devices | Tracks temp, light, shock, GPS, humidity. Light sensor flags unauthorized access | Security against theft/fraud + temp proof. $60/device, needs approval |
+| Specialized Carrier Network | Frozen Food Express (-10°F to 38°F nationwide), Rotex (candy/vitamins/pharma/beverages), additional carrier 42-80°F | Better rates than going direct/spot |
+
+**The pitch:** Dry LTL's "Protect from Freeze" is "a blanket and a prayer" — weather delays void it. True temp-controlled is the only real protection. Target seasonal-stoppers — they're switching methods, not stopping production.`},
+
+{id:'dray',name:'Drayage',md:`## Drayage
+
+| Feature | What It Does | Why It Matters |
+|---|---|---|
+| Port & Rail Connections | 3-5 strong carrier connections at every major port/rail terminal | Reliable capacity wherever freight needs to move |
+| Competitive Rates | Competitive pricing, high-quality service | Wins business, keeps customers satisfied |
+| High Capacity | Move large container volumes with one carrier | Easier to manage big shipments |`},
+];
+
+// ─── REFERENCE DATA: SCRIPTS ────────────────────────────────────────────
+const SCRIPTS=[
+{id:'before',name:'Before You Dial',md:`## Before You Dial
+
+**General call confidence:**
+- Be confident and SMILE
+- Control the conversation — be DIRECT with date/time suggestions
+- Don't apologize for calling — no "I'm sorry" for calling unannounced
+- Don't create an objection if there isn't one
+- Push twice if they give another objection after your first push
+
+**Invoice-specific phrasing (Section 6 only):**
+- "One thing I am going to need from you is..." — this is the ONE place that phrase belongs.
+
+**Find the TRUE decision maker.** Start at the top (owner). If passed to a shipping manager, qualify them — the person who handles day-to-day freight is not automatically who chose the provider.`},
+
+{id:'mvpcc',name:'MVPCC Qualifying',md:`## MVPCC — Qualifying Questions
+*Use for Owner AND Shipping Manager — same sequence every time.*
+
+**M — Mode**
+> "What modes are you currently using to move your products?"
+
+**V — Volume**
+> "What's the average number of shipments you send out per week/month?"
+
+**P — Product / Commodity**
+> "What commodity are you guys shipping?"
+
+**C — Competitor**
+> "Who are you guys currently using for your shipping?"
+
+**C — Decision Process**
+> "What was your decision-making process for bringing them on?"
+
+**Follow-up — always ask:**
+> "Is there anyone else that was involved in that decision-making process?"`},
+
+{id:'gatekeeper',name:'1. Gatekeeper',md:`## 1. Cold Call — Gatekeeper
+
+**Opening line:**
+> "Hey, this is _____ with Priority1. I am looking to speak to the owner or whoever is in charge at that location — who would that be?"
+
+**After they give a name:**
+> "Great, if you could transfer me over to _____, I'd really appreciate it." *(Push #1)*
+
+**Before the transfer — protect against a dead transfer:**
+> "Before you go ahead and transfer me — just in case we get disconnected, could I grab [name]'s email and a direct line?"
+
+### Gatekeeper Responses
+
+**"He/She is not available"**
+> "No problem. You know, you can probably help me out. I'm ______ with Priority1, which is a freight company that specializes in LTL, full truckload, and expedited freight. Does the nature of your business require you to ship freight on a regular basis?"
+→ "Not Sure" or "Yes We Do" → ask MVPCC, then ask to be transferred to shipping manager
+
+**"What's the reason for this call?"** *(Push #2)*
+> "I was just calling to make a quick introduction, if you could transfer me over to ______, I'd really appreciate it."
+
+**"He/she only meets by appointment."** *(Push #3)*
+> "I actually go by appointment as well, so that's exactly why I'm calling. If you could transfer me over to ______, I'd really appreciate it."
+
+→ "Transferring" → go to Owner/CEO Transfer
+→ Another objection → keep pushing (push twice total before backing off)
+
+**"Not Sure" (if they ship)**
+> "No problem. Maybe the shipping manager / logistics manager can help me. Do you know who that would be?"
+
+**If GK won't transfer:** Get owner's contact info AND shipping manager info, end the call gracefully.`},
+
+{id:'sm',name:'2. Shipping Manager Transfer',md:`## 2. Shipping Manager Transfer
+
+> "Hi, my name is ______. I work for Priority1 and I'm looking to speak with _____ [or 'the shipping manager' if no name]."
+
+**Once connected:**
+> "Hey ______. Like I said, I am ______ with Priority1. We're a freight company specializing in LTL, full truckload, and expedited freight. I realize I am calling unannounced, but was curious if the nature of your business has you shipping freight on a regular basis."
+
+**⚠️ Rule:** You may get cut off with an objection before asking qualifying questions. Do NOT push for a meeting unless they confirm they're the true DM.
+
+**"Yes we ship"** → Ask MVPCC
+
+→ "I brought them on because..." → They ARE the DM → Setting Up The Meeting
+→ "My boss/owner brought them on..." → NOT the DM → get Key Questions, ask to speak to owner → Owner/CEO Transfer`},
+
+{id:'owner',name:'3. Owner/CEO Transfer',md:`## 3. Owner / CEO Transfer
+
+> "Hey, this is ______ with Priority1. How are you?"
+
+Owner: "Good, how are you?"
+
+> "Good, thank you for asking. I realize I am calling totally unannounced, but the reason I am calling is because we're a freight company specializing in LTL, full truckload, and expedited freight. Curious if the nature of your business requires you to ship freight on a regular basis?"
+
+**⚠️ Rule:** Don't push for a meeting until you confirm (1) they are the true DM AND (2) they're qualified.
+
+**"Yes we ship"** → Ask MVPCC
+**"Can you talk to ___? He/she handles all the freight"** → The Pass Down
+
+- "I brought them on because..." → They ARE the DM → Setting Up The Meeting
+- "My shipping manager brought them on..." → ask Key Questions, end the call, follow up through SM
+
+### Key Questions (when owner says SM decides)
+- Confirm decision maker's name (boss/owner), get phone number and email
+- "What do you guys do?" "Is this your headquarters?"
+- "Do you have other locations? Do they ship? Who manages their shipping?"
+- "How do you receive your raw materials / inbound freight — who pays for and arranges that?"
+- "How do you get product in, what do you do with it here, how does it get back out?"
+- "How do you currently quote and book your freight?" (identify their tech)
+- "How are you currently tracking your freight?"
+- "Do you ever hear from your accounting team because your invoices don't match what you were originally quoted?"
+- "When's the last time you had to ship expedited freight to meet a deadline?"
+- "Is there anything you'd like to see improved with your current process?"
+
+**Wrap-up:**
+> "Thanks for your time today! I understand [owner's name] is out. Do you know when they will be returning?"
+> "Perfect, I will be sure to follow up then. When your owner returns, can you please let him/her know that I reached out?"`},
+
+{id:'passdown',name:'4. The Pass Down',md:`## 4. The Pass Down
+
+*When the owner says "Can you talk to ___? He/she handles the freight."*
+
+> "I can definitely do that, but does ____ have the ability to switch to Priority1 without your approval?"
+
+**YES, he/she does:**
+> "Oh perfect! I am confident Priority1 can save you time and money, and I'm sure those are aspects you both find valuable. Could you please pass me over to ____ and let him know that we've spoken and he/she has your blessing to speak with me?"
+→ Then qualify the shipping manager once transferred (MVPCC)
+
+**NO, he/she doesn't:** ⚠️ *(wording below — confirm against source when possible)*
+> "Oh okay, well it sounds like [Mike] handles the day-to-day freight, but since you oversee the bigger picture, you're actually in the best position to understand how changes in freight are going to affect your supply chain and overall cost."
+→ Continue qualifying the owner directly → Setting Up The Meeting`},
+
+{id:'meeting',name:'5. Setting Up The Meeting',md:`## 5. Setting Up The Meeting — 3 Options
+
+Pick whichever fits the flow. All three set expectations on length and topic without over-explaining.
+
+**Option 1 — Direct/Confident:**
+> "Awesome — based on what you've told me, I'm confident we can put together a quick cost analysis that could save you some real money. I'd like to grab 15 to 20 minutes on your calendar to walk through it together. Does tomorrow at [time] work?"
+
+**Option 2 — Competitor-anchored:**
+> "We've had a lot of success with companies in a similar spot to yours going up against [competitor]. I'd like to set up a short meeting — probably 15 to 20 minutes — where we can go over a cost comparison side by side. Does [day] at [time] work for you?"
+
+**Option 3 — Value-forward:**
+> "Based on everything you just shared, I think there's a real opportunity for us to help here. I'd like to grab some time — just 15 to 20 minutes — to walk you through what that could look like and run some numbers together. Does [day] at [time] work?"
+
+**They say yes:**
+> "Perfect. I have got you down for [insert time]. I will go ahead and send an Outlook invite so we've both got it on our schedules. What's a good email for you?"
+
+*(Get the email, repeat it back. Confirm time zone.)*
+
+> "Do you prefer meeting over Microsoft Teams or Zoom?"
+> "Great, I am sending over the meeting invite right now. Please let me know that you have received it."`},
+
+{id:'invoices',name:'6. Getting Invoices',md:`## 6. Getting The Invoices — 3-Push Approach
+
+> "One thing I am going to need for the meeting is just 10-15 recent freight invoices. It will really help guide the conversation and make for the most productive meeting possible. Can you make sure to bring those for us?"
+
+**If they say no:**
+
+**Push #1 (verify setup):**
+> "I completely understand what you're saying. The reason I need to see your invoices is to verify volume and destinations. Not to mention it helps me understand how you are set up with your current vendor. So, can you make sure to bring those for us?"
+
+**Push #2 (cost comparison):**
+> "I hear you, [person's name]. Invoices will allow me to put together a true cost comparison — or apples-to-apples comparison — against your current provider. I am very confident I can help you out financially. So can you make sure to bring those for us?"
+
+**Push #3 (LTL only — free freight bill audit):**
+> "I completely understand what you're saying. One of the most important value adds we offer is the free freight bill audit. The freight industry is known for quoting one amount and billing something else. More than half of my current customers didn't know they had a billing issue before they made the switch over to Priority1. I would love a chance to look at the bills to see if this is happening to your company. So, can you make sure to bring those for us?"
+
+**Push count: 1-2 for truckload, 1-3 for LTL.**
+
+**Why truckload skips Push #3:** Freight bill audits catch billing errors that creep in after the fact (reclasses, reweighs, accessorials) — common in LTL's hub-and-spoke model. Truckload rates are agreed as a flat rate before pickup, so there's far less to audit after delivery. Push #2 is already the full value for truckload.`},
+
+{id:'warm',name:'7. Warm Call / IBS',md:`## 7. Warm Call — IBS / Setting a Meeting
+*Use when you already have qualifying info from a lower level or gatekeeper, and you're calling the TRUE DM with that context in hand.*
+
+**1. Introduction**
+> "Hi, this is Alexis with Priority1. How are you?"
+
+**2. Disarming statement**
+> "I realize I am calling totally unannounced, but the reason I am calling..."
+
+**3. Initial Benefit Statement**
+> "...is because we're a freight company specializing in LTL, full truckload, and expedited freight. I spoke with [Jim] in your warehouse last week and we discussed your current setup with [GlobalTranz]."
+
+**4. Power statement**
+> "Based on our conversation, I am very confident we can put you in a better position."
+
+**5. Close for appointment** — use the 3 options from Setting Up The Meeting.
+
+**6. Commitment on the appointment**
+> "I've got you down for [insert time] tomorrow. I will go ahead and send an outlook invite so we've both got it on our schedules. What's a good email for you?" *(confirm time zone)*
+>
+> "One thing I'm going to need for the meeting is just 10-15 recent freight invoices..."
+>
+> "One last question before I go — assuming we can make your process more efficient and save you money, is there any reason that you wouldn't be willing to switch your business to Priority1?"
+
+**DM: "I don't think so."**
+> "It was nice to meet you, and I look forward to our meeting!"`},
+
+{id:'bestpractices',name:'8. Cold Calling Best Practices',md:`## 8. Cold Calling — Best Practices
+
+- It's not what you say, it's HOW you say it — be confident
+- Push twice to get to the DM
+- Always end with a question — "Who would that be?"
+- DO NOT apologize for calling
+- Don't create an objection if there isn't one
+- ALWAYS close for time — "When is good for you to meet?" be DIRECT with your date/time suggestion`},
+
+{id:'mixed',name:'9. Mixed Bucket (LTL+TL)',md:`## 9. Mixed Bucket (LTL + Truckload) Qualifying
+*Use when a DM ships via BOTH — qualify each mode fully with MVPCC, one at a time, before closing.*
+
+**1-3. Intro / Disarm / IBS** — same as Section 7/Gatekeeper openers.
+
+**4. DM says they ship both — qualify LTL first:**
+> "Got it — let's start with LTL. What's the average number of LTL shipments you send out per week/month?" *(Volume)*
+
+DM: "3-4 times a week."
+> "And what are you typically shipping on those?" *(Commodity)*
+> "Who are you currently using for your LTL shipping?" *(Competitor)*
+> "What was your decision-making process for bringing them on?" *(Decision)*
+> "Is there anyone else involved in that decision?" *(Follow-up)*
+
+**Then circle back to truckload — same sequence:**
+> "Perfect — now let's circle back to truckload. What's the average number of truckload shipments you send out per week/month?"
+> ... (Commodity, Competitor, Decision, Follow-up)
+
+**5. Close for a specific appointment — both modes:**
+> "Okay, well — based on everything you've shared, I'm confident Priority1 would be a great fit for both your LTL and truckload freight. I'd like to set up a meeting so we can go over both side by side — does [day] at [time] work?"
+
+### If they don't have load details ready
+> "No worries — when's your next load expected to go out?"
+
+- Next load **before** the meeting → "Could you send me the details when you have them? I'd love to use real numbers in our meeting."
+- Next load **after** the meeting, plenty of gap → "Perfect, we can go over a past load in the meeting, and use this one as a follow-up afterward."
+- Gap is tight (meeting in 4 days, load in 2) → "I'll follow up with you in a day or two to grab those details before our meeting."`},
+
+{id:'objections',name:'10. Objections',md:`## 10. Objections
+
+All 19 objections live in the **Study** tab — triggers, exact responses, hints, and "why this works." That's the canonical source.
+
+**Where objections typically come up:**
+
+| Call Stage | Likely Objections |
+|---|---|
+| Gatekeeper | Not Interested — Lower Level, Send an Email |
+| Owner/SM Qualifying | Happy with Current Provider, All Customer Routed, Not Interested — DM, We Have Our Own Trucks, No More Providers, BID/RFP/RFQ, Budget/Won't Give Price |
+| Pass Down | Handled inline in the script itself |
+| Invoice Push | Invoice Objection (3 options) |
+| Anytime | No Time, Won't Use a Broker LTL, Bad Experience w/P1, Eggs in One Basket, Honeymoon, Contract Objection LTL |
+
+---
+
+## How The Call Flows
+
+1. **Dial.** Gatekeeper picks up.
+2. **Push for the owner.** They transfer you, pass you to a shipping manager, or object.
+3. **Shipping Manager:** run MVPCC. DM? → Setting Up The Meeting. Not DM? → Key Questions, follow up with owner.
+4. **Owner:** run MVPCC. Pass down? → The Pass Down. DM? → Setting Up The Meeting.
+5. **Meeting set** → confirm email + time zone → send invite → request invoices → trial close.
+6. **Objection at any point** → Study tab → return to where you left off.
+
+### Key Rules
+- Always push twice before backing off a gatekeeper objection
+- Don't set a meeting with a SM unless they confirm they're the true DM
+- True DM = the person who brought on the current provider
+- Invoice pushes: 1-2 for truckload, up to 3 for LTL
+- Build rapport throughout AND on follow-ups
+- Ask the second question — don't accept a one-word answer
+- Know when to let it go — especially "Bad Experience with Priority1"
+- **Meeting-push rule:** push for the meeting unless the response is a price objection — handle price first, then push
+- **Standing follow-up rule:** on ANY follow-up call, regardless of outcome, always ask for the next load to quote`},
+];
+
+// ─── REFERENCE DATA: QUOTE CHECKLISTS ─────────────────────────────────────
+const QUOTES=[
+{id:'universal',name:'Universal Intake',md:`## Universal Quote Intake
+*Collect when applicable, before mode-specific fields*
+
+- Customer / Contact
+- Quote-only or live shipment?
+- Origin & Destination
+- Pickup/ready date & requested delivery date
+- Commodity
+- Weight, Dimensions, Quantity/pallet count
+- Equipment / Mode
+- Special requirements
+- Frequency / anticipated volume
+- Target price or budget (if obtainable)
+- Declared load value
+- Hazmat status
+- Current provider & last price paid`},
+
+{id:'ltl_q',name:'LTL',md:`## LTL Quoting
+Send to **LTL Support** (insidesalesltl@priority1.com)
+
+- Pickup ZIP code
+- Delivery city, state, ZIP
+- Pallet count
+- Pallet dimensions per pallet (if multiple differ)
+- Weight per pallet (if multiple differ)
+- Commodity
+- Accessorials
+- Hazmat status — if yes: UN#, Class#, Packing Group`},
+
+{id:'dryvan_q',name:'Dry Van',md:`## Dry Van Quoting
+Send to the office-specific support email (see Modes → Dry Van)
+
+- Date/time of pickup
+- Customer in CABO already? (if set up)
+- Origin city, state, ZIP
+- Pallet count, weight, commodity, dimensions
+- Partial or full truckload?
+- Receiver city, state, ZIP
+- Hazmat status — if yes: UN#, Class#, Packing Group
+- Additional special load requirements`},
+
+{id:'flatbed_q',name:'Flatbed',md:`## Flatbed Quoting
+Send to flatbed@priority1.com
+
+- Pickup ZIP / Delivery ZIP
+- Commodity description, piece count, weight, dimensions
+- Tarps required? Required tarp size?
+- How loaded at pickup / unloaded at delivery (forklift, crane, side load, ramps)
+- Appointment requirements / shipping & receiving hours
+- Ship date / delivery date
+- Value of the load
+- Chains, coil racks, headboards, securement needs
+
+Get loading AND unloading details for BOTH pickup and delivery.`},
+
+{id:'temp_q',name:'Temp-Controlled',md:`## Temp-Controlled Quoting
+Send to tempcontrolled@priority1.com
+
+- Origin / Destination
+- Commodity
+- Pallet count, weight
+- Exact pallet dimensions (LTL/partial — "standard pallet" is not acceptable)
+- Equipment type (53, sprinter, straight)
+- Exact temperature or range (degrees) — never accept "frozen/chilled/ambient" alone
+- Total value if over $100,000 (for insurance)
+- Driver-assist requirements — be specific (e.g. tailgating)
+- Pre-cooling, washout, liftgate, other special equipment
+- Hazmat UN# if applicable
+- Tanker endorsement if bulk liquid / totes`},
+
+{id:'exp_q',name:'Expedited',md:`## Expedited Quoting
+Send to expedited@priority1.com
+
+- Origin (with pickup time) / Destination (with delivery time)
+- Commodity, pallet count, pallet dimensions, weight
+- Equipment type — dock-high needed?
+- Special requirements
+
+**Air quotes:** zips + commodity required.`},
+
+{id:'dray_q',name:'Drayage',md:`## Drayage Quoting
+Send to drayage@priority1.com
+
+- Origin yard/rail
+- Shipper or receiver ZIP
+- ETA/LFD (import) or ERD/cutoff (export)
+- Total weight
+- Container size/type
+- Drop or live offload?
+- Volume
+- Direct delivery or transload?`},
+];
+
+// ─── ACCOUNT CASE STUDIES (live, personal — 🟦) ────────────────────────────
+const OPEN_ITEMS_MD=`## Open Items — Check Before Calling
+
+1. **Global Foods Group / AWG lanes — quotes sent Fri 6/12.** Awaiting Samantha's response on pricing AND on whether this is recurring or one-time. No action until she replies.
+2. **Burr Ridge flatbed — follow up this week.** Script is ready (market education: 2023-24 recession → 2025-26 recovery, highest flatbed rates since 2022). Don't talk yourself out of timely follow-ups.`;
+
+const CASESTUDIES=[
+{id:'global-foods',name:'Global Foods Group — AWG Lanes',md:`## Global Foods Group — Samantha
+
+**Contact:** Samantha (Shipping Coordinator, Global Foods Group)
+**Mode:** LTL Reefer + FTL Reefer (original 13 lanes) — superseded by NEW active item below
+**Commodity:** Deep frozen (-10°F)
+
+### Status
+The original 13-lane call did NOT happen during training week. Zyan sent a follow-up email Friday 6/12 asking for feedback. Samantha responded same day with a NEW quote request.
+
+### NEW — AWG Account Lane Request (received Fri 6/12/2026)
+Samantha asked Zyan to quote 8 additional lanes for their **AWG account** (likely Associated Wholesale Grocers — a separate customer Global Foods ships for).
+
+**Shipment specs (same for all 8 lanes):**
+- Mode: FTL Reefer
+- Weight: 40,560 lbs
+- Temp: -10°F
+- Dimensions: 48 × 40
+- Origin: Marshall, AR 72650
+
+**Destinations:**
+1. Kenosha, WI
+2. Norfolk, NE
+3. Pearl River, LA
+4. Hernando, MS
+5. Springfield, MO
+6. Oklahoma City, OK
+7. Kansas City, KS
+8. Goodlettsville, TN
+
+**Margin used:** 10% GP. Marcus tried to find Samantha's current paid rate for comparison, but she said it's been a year since she ran these lanes — no baseline available.
+
+### Quotes Sent Fri 6/12/2026
+
+| Destination | Quoted |
+|---|---|
+| Kenosha, WI | $3,740 |
+| Norfolk, NE | $2,970 |
+| Pearl River, LA | $3,080 |
+| Hernando, MS | $1,980 |
+| Springfield, MO | $990 |
+| Oklahoma City, OK | $2,420 |
+| Kansas City, KS | $1,980 |
+| Goodlettsville, TN | $2,860 |
+
+Total ~$18,020 across all 8. These came in well above generic reefer benchmarks ($2.80-3.40/mi national) — explained by -10°F deep-frozen being a specialized, smaller carrier pool (Frozen Food Express territory), not by seasonality or region.
+
+**Open question still unanswered:** Is this recurring or a one-time cleanout? Asked in the quote email — awaiting Samantha's response.
+
+**Next action:** Wait for Samantha's reply. If she comes back with questions or moves forward, follow up on the original 13-lane conversation too — she's clearly active again.
+
+### Pain Points / Value Adds Used
+- "Protect from Freeze" reefer education (see Value Adds → Temp-Controlled) — dry LTL's protect-from-freeze doesn't hold up to weather delays; true temp-controlled trailer is the only real protection at -10°F.
+- LTL reefer transit framing: "3-week lead time / 2-week transportation window."
+
+### Call Approach
+- Rapport openers (in order): transplant-to-Arizona angle first, then NBA/Knicks-vs-Spurs Finals joke.
+- **Meeting-push rule:** push for a meeting if response is positive or undecided; do NOT push if it's a price objection — handle price first.
+- Credit app already in motion via Ivy in accounting, Samantha already informed by Marcus — don't re-ask about credit app status, just confirm it went through.
+
+### Lessons
+- Reefer LTL transit-time education and the "blanket and a prayer" line are repeatable hooks for any frozen/chilled account — both now in the Value-Add Library.
+- The meeting-push and standing follow-up rules are now in Scripts → Objections → Key Rules as general principles, not just for this account.`},
+
+{id:'burr-ridge',name:'Burr Ridge, IL → Rochester, NY — Flatbed',md:`## Burr Ridge, IL → Rochester, NY — Flatbed
+
+**Mode:** Flatbed
+**Lane:** Burr Ridge, IL → Rochester, NY
+**Distance:** 610 miles
+**Quote given:** $3,850 (≈ $6.31/mile)
+**Customer expectation:** $3/mile (≈ $1,830 for this lane)
+
+### Gap Analysis
+The customer's $3/mile expectation reflects 2023–2024 freight-recession pricing — a period of depressed flatbed spot rates due to carrier oversupply. Current flatbed rates are at their highest since 2022, driven by carrier attrition (fewer trucks, not more freight demand).
+
+### Follow-up Script Used
+Market-education branch citing the 2023-24 freight recession → 2025-26 recovery narrative, framed as "highest flatbed rates since 2022." Branches built for:
+- Customer accepting the price
+- Customer pushing back but staying engaged
+- Customer rejecting outright
+
+**Always closes by asking for the next live load to quote** — regardless of outcome on this one.
+
+### Status
+Was supposed to follow up Friday but talked himself out of it ("he only ships once a month, I called last week, can wait until next week") — even though Friday would likely have been good timing. Still pending — follow up this week.
+
+### Lessons
+- The 2020→2026 freight market history (COVID crash → 2021 peak → 2022 turn → 2023 recession → 2024 bottom → 2025-26 supply-driven recovery) is the foundation for handling ANY "rates used to be cheaper" pushback — not just flatbed.
+- "Always ask for the next load to quote" regardless of outcome is now in Scripts → Objections → Key Rules as a standing rule.`},
+];
+
+// ─── AI COACH: RETRIEVAL OVER APP CONTENT ──────────────────────────────────
+// Flattens every reference dataset into searchable chunks: {source, title, text}
+function buildKnowledgeIndex(){
+  const chunks=[];
+  SCRIPTS.forEach(s=>chunks.push({source:'Scripts',title:s.name,text:s.md}));
+  MODES.forEach(m=>chunks.push({source:'Freight Modes',title:m.name,text:m.md}));
+  VALUEADDS.forEach(v=>chunks.push({source:'Value Adds',title:v.name,text:v.md}));
+  QUOTES.forEach(q=>chunks.push({source:'Quote Checklists',title:q.name,text:q.md}));
+  CASESTUDIES.forEach(c=>chunks.push({source:'Account Case Studies',title:c.name,text:c.md}));
+  chunks.push({source:'Account Case Studies',title:'Open Items',text:OPEN_ITEMS_MD});
+  GLOSSARY.forEach(g=>chunks.push({source:'Glossary',title:g.term,text:`${g.term} (${g.section}): ${g.def}`}));
+  OBJ.forEach(o=>chunks.push({source:'Objection Driller',title:o.name,
+    text:`Trigger: "${o.trigger}"\nHint: ${o.hint}\nResponse: ${o.parts.join('\n')}\nWhy this works: ${o.why}`}));
+  return chunks;
+}
+const KNOWLEDGE_INDEX=buildKnowledgeIndex();
+
+// Naive keyword retrieval: score chunks by overlap with query words, return top N
+function retrieveContext(query,n=5){
+  const words=query.toLowerCase().match(/[a-z0-9$%°]+/g)||[];
+  const stop=new Set(['the','a','an','is','are','to','for','of','and','or','in','on','what','how','do','does','i','my','me','you','your','can','should','with','this','that']);
+  const terms=words.filter(w=>w.length>2&&!stop.has(w));
+  if(terms.length===0)return[];
+  const scored=KNOWLEDGE_INDEX.map(c=>{
+    const hay=(c.title+' '+c.text).toLowerCase();
+    let score=0;
+    terms.forEach(t=>{
+      const matches=hay.split(t).length-1;
+      score+=matches*(c.title.toLowerCase().includes(t)?3:1);
+    });
+    return {...c,score};
+  });
+  return scored.filter(c=>c.score>0).sort((a,b)=>b.score-a.score).slice(0,n);
+}
+
+// ─── AI COACH: GEMINI API CALL ─────────────────────────────────────────────
+async function callGemini({apiKey,model,systemPrompt,messages,useSearch}){
+  if(!apiKey)throw new Error('NO_KEY');
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const body={
+    contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.text}]})),
+    systemInstruction:{parts:[{text:systemPrompt}]},
+    generationConfig:{temperature:0.6,maxOutputTokens:800},
+  };
+  if(useSearch)body.tools=[{google_search:{}}];
+  const res=await fetch(url,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},
+    body:JSON.stringify(body),
+  });
+  if(!res.ok){
+    const errText=await res.text().catch(()=>'');
+    throw new Error(`HTTP_${res.status}:${errText.slice(0,200)}`);
+  }
+  const data=await res.json();
+  const cand=data.candidates&&data.candidates[0];
+  if(!cand)throw new Error('NO_CANDIDATE');
+  const text=(cand.content&&cand.content.parts||[]).map(p=>p.text||'').join('');
+  const grounded=!!(cand.groundingMetadata);
+  return {text,grounded};
+}
+
+const COACH_SYSTEM_PROMPT=`You are Zyan Lamour's Priority1 sales coach, freight tutor, and study partner, built into his personal sales companion app.
+
+Rules:
+- Ground your answers in the CONTEXT provided below when it's relevant. If the context answers the question, prioritize it over your general knowledge.
+- Always be clear about what's official Priority1 policy (from the context) vs. your own general explanation/coaching. Use a short label like "(per your scripts)" or "(general industry context, verify with your team)" when it matters.
+- If the context doesn't cover something and you're not confident, say so plainly rather than guessing at Priority1-specific policy.
+- Be direct, concise, and practical — Zyan is on a phone, between calls. No long preambles.
+- For freight/industry teaching questions, you can use your general knowledge freely, but flag anything that may have changed recently as worth double-checking.
+- Never invent specific current freight rates with false precision — give ranges and label them as estimates.`;
+
+const ROLEPLAY_SYSTEM_PROMPT=`You are roleplaying as a freight decision-maker (owner or shipping manager) on a cold call with Zyan, an inside sales rep at Priority1. Stay in character as the prospect — respond the way a real, somewhat busy, mildly skeptical business owner would. Use natural, brief dialogue (1-3 sentences), not monologues.
+
+After Zyan's first message, pick ONE objection scenario from the CONTEXT (the Objection Driller library) to roleplay, and don't tell him which one you picked. React to what he actually says — if his response handles the objection well, soften and move toward a meeting; if it's weak, push back realistically.
+
+Every few exchanges, OR if Zyan writes "stop" or "feedback", break character (prefix with "COACH:") and give him 2-3 sentences of specific feedback on delivery, comparing what he said to the official response in the context, and tell him which objection it was.`;
+
+
+const PERF_DAILY=[
+  {key:'qualifiedLeads',label:'Qualified Leads',monthlyTarget:40},
+  {key:'newMeetings',label:'New Meetings',monthlyTarget:4},
+  {key:'paperCloses',label:'Paper Closes',monthlyTarget:4},
+  {key:'activations',label:'Activations',monthlyTarget:2},
+  {key:'newGP',label:'New GP',monthlyTarget:1200,unit:'$'},
+  {key:'talkTime',label:'Talk Time',dailyTarget:2,unit:'hrs',isAvg:true},
+];
+function monthKey(){const d=new Date();return `perf_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;}
+function monthLabel(){const d=new Date();return d.toLocaleString('en-US',{month:'long',year:'numeric'});}
+function todayKey(){return new Date().toISOString().slice(0,10);}
+function monthKeyFor(dateStr){return `perf_${dateStr.slice(0,7)}`;}
+function monthLabelFor(dateStr){return new Date(dateStr+'T00:00:00').toLocaleString('en-US',{month:'long',year:'numeric'});}
+// Aggregate daily entries into monthly totals/averages
+function perfTotals(perf){
+  const days=perf.days||{};
+  const dayList=Object.values(days);
+  const totals={};
+  PERF_DAILY.forEach(t=>{
+    if(t.isAvg){
+      const vals=dayList.map(d=>d[t.key]).filter(v=>v!=null);
+      totals[t.key]=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;
+      totals[t.key+'_days']=vals.length;
+    } else {
+      totals[t.key]=dayList.reduce((sum,d)=>sum+(d[t.key]||0),0);
+    }
+  });
+  return totals;
+}
+
+// ─── MAIN APP ───────────────────────────────────────────────────────────────
+function App(){
+  const [theme,setTheme]=useState(()=>load(SK.theme,'dark'));
+  const [quizMode,setQuizMode]=useState(()=>load(SK.quiz,false));
+  const [view,setView]=useState('home');
+  const [studyView,setStudyView]=useState('dayList');
+  const [selDay,setSelDay]=useState(null);
+  const [status,setStatus]=useState(()=>load(SK.status,{}));
+  const [reps,setReps]=useState(()=>load(SK.reps,{}));
+  const [activity,setActivity]=useState(()=>load(SK.activity,[]));
+  const [queue,setQueue]=useState([]);
+  const [qIdx,setQIdx]=useState(0);
+  const [parts,setParts]=useState(0);
+  const [hinted,setHinted]=useState(false);
+  const [revealed,setRevealed]=useState(false);
+  const [progTab,setProgTab]=useState('overview');
+  const [toast,setToast]=useState(null);
+  const toastTimerRef=useRef(null);
+
+  // Reference
+  const [refTab,setRefTab]=useState('scripts');
+  const [refSearch,setRefSearch]=useState('');
+  const [collapsedRefIds,setCollapsedRefIds]=useState(()=>new Set());
+  const [collapsedAcctIds,setCollapsedAcctIds]=useState(()=>new Set());
+  const refTopBarRef=useRef(null);
+  const [refTopBarHeight,setRefTopBarHeight]=useState(0);
+  useEffect(()=>{
+    if(view!=='reference')return;
+    const measure=()=>{ if(refTopBarRef.current)setRefTopBarHeight(refTopBarRef.current.offsetHeight); };
+    measure();
+    const ro=new ResizeObserver(measure);
+    if(refTopBarRef.current)ro.observe(refTopBarRef.current);
+    return ()=>ro.disconnect();
+  },[view,refTab]);
+
+  // Journal & Performance (persistent storage)
+  const [journalTab,setJournalTab]=useState('journal');
+  const [entries,setEntries]=useState([]);
+  const [entriesLoaded,setEntriesLoaded]=useState(false);
+  const [showAddEntry,setShowAddEntry]=useState(false);
+  const [perf,setPerf]=useState({});
+  const [perfLoaded,setPerfLoaded]=useState(false);
+  const [perfDate,setPerfDate]=useState(()=>todayKey());
+  const [perfView,setPerfView]=useState({});
+  const [perfViewLoaded,setPerfViewLoaded]=useState(false);
+  const [entryForm,setEntryForm]=useState({date:todayKey(),whatHappened:'',whatWorked:'',whatDifficult:'',lesson:'',nextAction:''});
+  const [storageError,setStorageError]=useState(false);
+
+  // AI Coach
+  const [geminiKey,setGeminiKey]=useState(()=>load(SK.geminiKey,''));
+  const [geminiModel,setGeminiModel]=useState(()=>load(SK.geminiModel,'gemini-2.5-flash'));
+  const [coachMode,setCoachMode]=useState('chat'); // 'chat' | 'roleplay'
+  const [coachMessages,setCoachMessages]=useState([]);
+  const [coachInput,setCoachInput]=useState('');
+  const [coachLoading,setCoachLoading]=useState(false);
+  const [coachError,setCoachError]=useState(null);
+  const [coachUseSearch,setCoachUseSearch]=useState(false);
+  const [customGlossary,setCustomGlossary]=useState([]);
+  const [customGlossaryLoaded,setCustomGlossaryLoaded]=useState(false);
+  const coachScrollRef=useRef(null);
+
+  const c=T[theme];
+
+  useEffect(()=>{ document.body.className=theme; },[theme]);
+
+  // Keep Coach chat scrolled to the newest message without placing a hook
+  // inside a conditionally invoked nested screen function.
+  useEffect(()=>{
+    if(view==='coach' && coachScrollRef.current){
+      coachScrollRef.current.scrollTop=coachScrollRef.current.scrollHeight;
+    }
+  },[view,coachMessages,coachLoading]);
+
+  // Load journal + performance from persistent storage on mount
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const r=await window.storage.get('journal_entries');
+        setEntries(r&&r.value?JSON.parse(r.value):[]);
+      }catch(e){ setEntries([]); }
+      setEntriesLoaded(true);
+      try{
+        const r=await window.storage.get('custom_glossary');
+        setCustomGlossary(r&&r.value?JSON.parse(r.value):[]);
+      }catch(e){ setCustomGlossary([]); }
+      setCustomGlossaryLoaded(true);
+      try{
+        const r=await window.storage.get(monthKey());
+        const data=r&&r.value?JSON.parse(r.value):{};
+        setPerf(data);
+        setPerfView(data); // perfDate defaults to today -> same month
+      }catch(e){ setPerf({}); setPerfView({}); }
+      setPerfLoaded(true);
+      setPerfViewLoaded(true);
+    })();
+  },[]);
+
+  // When the selected performance date's month differs from the current month, load that month separately
+  useEffect(()=>{
+    if(!perfLoaded)return; // wait for initial load
+    const mk=monthKeyFor(perfDate);
+    if(mk===monthKey()){
+      setPerfView(perf);
+      setPerfViewLoaded(true);
+      return;
+    }
+    setPerfViewLoaded(false);
+    (async()=>{
+      try{
+        const r=await window.storage.get(mk);
+        setPerfView(r&&r.value?JSON.parse(r.value):{});
+      }catch(e){ setPerfView({}); }
+      setPerfViewLoaded(true);
+    })();
+  },[perfDate,perfLoaded,perf]);
+
+  const saveStatus=s=>{setStatus(s);save(SK.status,s);};
+  const saveReps=r=>{setReps(r);save(SK.reps,r);};
+  const saveActivity=a=>{setActivity(a);save(SK.activity,a);};
+  const saveTheme=t=>{setTheme(t);save(SK.theme,t);};
+  const saveQuizMode=q=>{setQuizMode(q);save(SK.quiz,q)};
+  const showToast=(message)=>{
+    setToast(message);
+    if(toastTimerRef.current)clearTimeout(toastTimerRef.current);
+    toastTimerRef.current=setTimeout(()=>setToast(null),2200);
+  };
+
+  const saveEntries=async(next)=>{
+    setEntries(next);
+    try{ await window.storage.set('journal_entries',JSON.stringify(next)); setStorageError(false); }
+    catch(e){ setStorageError(true); }
+  };
+  const saveCustomGlossary=async(next)=>{
+    setCustomGlossary(next);
+    try{ await window.storage.set('custom_glossary',JSON.stringify(next)); setStorageError(false); }
+    catch(e){ setStorageError(true); }
+  };
+  const saveGeminiKey=k=>{ setGeminiKey(k); save(SK.geminiKey,k); };
+  const saveGeminiModel=m=>{ setGeminiModel(m); save(SK.geminiModel,m); };
+  const savePerf=async(next)=>{
+    setPerfView(next);
+    if(monthKeyFor(perfDate)===monthKey())setPerf(next);
+    try{ await window.storage.set(monthKeyFor(perfDate),JSON.stringify(next)); setStorageError(false); }
+    catch(e){ setStorageError(true); }
+  };
+
+  const getStatus=id=>status[id]||'notStarted';
+
+  const updateCard=(id,newStatus)=>{
+    const ns={...status,[id]:newStatus};
+    saveStatus(ns);
+    const obj=OBJ.find(o=>o.id===id);
+    const na=[{id,name:obj.name,status:newStatus,time:Date.now()},...activity].slice(0,20);
+    saveActivity(na);
+  };
+
+  const rehearseCard=()=>{
+    if(!card)return;
+    const nr={...reps,[card.id]:(reps[card.id]||0)+1};
+    saveReps(nr);
+    setParts(0);setHinted(false);setRevealed(false);
+  };
+
+  const masterCount=OBJ.filter(o=>getStatus(o.id)==='mastered').length;
+  const learnCount=OBJ.filter(o=>getStatus(o.id)==='learning').length;
+  const reviewCount=OBJ.filter(o=>getStatus(o.id)==='toReview').length;
+  const notStartCount=OBJ.filter(o=>getStatus(o.id)==='notStarted').length;
+  const masterPct=Math.round((masterCount/OBJ.length)*100);
+  const todayDay=DAYS.find(d=>d.ids.some(id=>getStatus(id)!=='mastered'))||DAYS[DAYS.length-1];
+
+  const buildQueue=useCallback(day=>{
+    const cards=day.ids.map(id=>OBJ.find(o=>o.id===id));
+    const order=['notStarted','toReview','learning','mastered'];
+    return [...order.flatMap(s=>cards.filter(c=>getStatus(c.id)===s))];
+  },[status]);
+
+  const startStudy=day=>{
+    setSelDay(day);
+    const q=buildQueue(day);
+    setQueue(q);setQIdx(0);setParts(0);setHinted(false);setRevealed(false);
+    setStudyView('card');setView('study');
+  };
+  const openSetList=day=>{ setSelDay(day); setStudyView('setList'); setView('study'); };
+
+  const card=queue[qIdx];
+  const totalParts=card?card.parts.length:1;
+
+  const advanceToNextDay=()=>{
+    const currentDay=selDay || (card?DAYS.find(d=>d.id===card.day):null);
+    if(!currentDay){setStudyView('setList');return;}
+    const currentIndex=DAYS.findIndex(d=>d.id===currentDay.id);
+    const nextDay=DAYS[currentIndex+1];
+    const completeLabel=currentDay.num===1?'Pre-Training complete':`Day ${currentDay.num} complete`;
+    if(nextDay){
+      showToast(`${completeLabel} — starting Day ${nextDay.num}`);
+      const q=buildQueue(nextDay);
+      setSelDay(nextDay);setQueue(q);setQIdx(0);setParts(0);setHinted(false);setRevealed(false);
+      setStudyView('card');setView('study');
+    }else{
+      showToast(`${completeLabel} — all training days complete`);
+      setQueue([]);setQIdx(0);setParts(0);setHinted(false);setRevealed(false);
+      setStudyView('setList');
+    }
+  };
+
+  const advance=(newStatus)=>{
+    if(card)updateCard(card.id,newStatus);
+    const next=qIdx+1;
+    if(newStatus==='toReview'){
+      const newQ=[...queue];
+      const insert=Math.min(next+1,newQ.length);
+      newQ.splice(insert,0,card);
+      setQueue(newQ);
+    }
+    if(next>=queue.length&&newStatus!=='toReview'){ advanceToNextDay(); }
+    else { setQIdx(next);setParts(0);setHinted(false);setRevealed(false); }
+  };
+
+  // ─── STYLES ───────────────────────────────────────────────────────────────
+  const S={
+    wrap:{flex:1,display:'flex',flexDirection:'column',background:c.bg,color:c.text,
+      maxWidth:480,margin:'0 auto',width:'100%',height:'100%',overflow:'hidden'},
+    scrollArea:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:72},
+    hdr:{padding:'14px 20px 10px',display:'flex',alignItems:'center',justifyContent:'space-between'},
+    hdrLeft:{display:'flex',flexDirection:'column'},
+    hdrBrand:{fontSize:10,letterSpacing:'0.2em',color:c.accent,fontWeight:700,fontFamily:'DM Mono,Courier New,monospace'},
+    hdrTitle:{fontSize:19,fontWeight:700,letterSpacing:'-0.02em'},
+    card:{background:c.surface,borderRadius:16,padding:'16px 18px',margin:'0 20px 12px'},
+    cardBorder:{background:c.surface,borderRadius:16,padding:'16px 18px',margin:'0 20px 12px',border:`1px solid ${c.border}`},
+    sectionLabel:{fontSize:10,fontWeight:700,letterSpacing:'0.16em',color:c.textSub,padding:'14px 20px 6px'},
+    pbarTrack:{height:4,background:c.surfaceHigh,borderRadius:2,overflow:'hidden'},
+    pbarFill:{height:'100%',background:c.accent,borderRadius:2,transition:'width 0.4s ease'},
+    nav:{position:'fixed',bottom:0,left:'50%',transform:'translateX(-50%)',width:'100%',
+      maxWidth:480,height:60,background:c.navBg,borderTop:`1px solid ${c.border}`,
+      display:'flex',alignItems:'stretch',zIndex:100},
+    navBtn:(active)=>({flex:1,display:'flex',flexDirection:'column',alignItems:'center',
+      justifyContent:'center',gap:2,background:'none',color:active?c.accent:c.textSub,
+      fontSize:8,fontWeight:700,letterSpacing:'0.03em',transition:'color 0.15s',padding:'0 2px'}),
+    dayItem:{display:'flex',alignItems:'center',gap:14,padding:'14px 20px',borderBottom:`1px solid ${c.border}`,cursor:'pointer'},
+    setItem:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px',borderBottom:`1px solid ${c.border}`,cursor:'pointer'},
+    flashFront:{background:c.flashFront,borderRadius:20,padding:'24px 22px',margin:'0 16px 14px',border:`1px solid ${c.border}`,minHeight:140,cursor:'pointer'},
+    flashBack:{background:c.flashBack,borderRadius:16,padding:'16px 18px',margin:'0 16px 10px',border:`1px solid ${c.flashBorder}`,cursor:'pointer'},
+    whyBox:{background:c.why,borderRadius:14,padding:'14px 18px',margin:'0 16px 10px',border:`1px solid ${c.whyBorder}`},
+    actionRow:{display:'flex',gap:12,padding:'8px 16px 16px',justifyContent:'center'},
+    actionBtn:(color,bg)=>({width:60,height:60,borderRadius:30,background:bg,
+      border:`2px solid ${color}`,color:color,fontSize:11,fontWeight:700,
+      display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:2}),
+    rehearseBtn:{width:'100%',padding:'13px 16px',borderRadius:14,background:theme==='dark'?'#07172a':'#eff6ff',
+      border:'1px solid #2563eb',color:'#60a5fa',fontSize:13,fontWeight:800,
+      letterSpacing:'0.08em',display:'flex',alignItems:'center',justifyContent:'center',gap:8},
+    chipBtn:(active)=>({padding:'7px 13px',borderRadius:20,border:`1px solid ${active?c.accent:c.border}`,
+      background:active?`${c.accent}22`:'none',color:active?c.accent:c.textSub,
+      fontSize:11,fontWeight:700,letterSpacing:'0.04em',whiteSpace:'nowrap'}),
+    input:{width:'100%',padding:'10px 12px',borderRadius:10,border:`1px solid ${c.border}`,
+      background:c.surfaceHigh,color:c.text,fontSize:13,fontFamily:'inherit',resize:'vertical'},
+    label:{fontSize:10,fontWeight:700,letterSpacing:'0.1em',color:c.textSub,marginBottom:5,display:'block'},
+  };
+
+  // ─── DAY RING ─────────────────────────────────────────────────────────────
+  function DayRing({day,size=36}){
+    const ids=day.ids;
+    const done=ids.filter(id=>getStatus(id)==='mastered').length;
+    const pct=done/ids.length*100;
+    const r=(size-4)/2;
+    const circ=2*Math.PI*r;
+    const dash=(pct/100)*circ;
+    const allDone=done===ids.length;
+    return(
+      <div style={{position:'relative',width:size,height:size,flexShrink:0}}>
+        <svg width={size} height={size} style={{transform:'rotate(-90deg)'}}>
+          <circle cx={size/2} cy={size/2} r={r} fill='none' stroke={c.surfaceHigh} strokeWidth={4}/>
+          {pct>0&&<circle cx={size/2} cy={size/2} r={r} fill='none'
+            stroke={allDone?STATUS_COLOR.mastered:c.accent} strokeWidth={4}
+            strokeDasharray={`${dash} ${circ-dash}`} strokeLinecap='round'/>}
+        </svg>
+        <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',
+          justifyContent:'center',fontSize:9,fontWeight:700,color:allDone?STATUS_COLOR.mastered:c.textSub}}>
+          {allDone?'✓':`${done}/${ids.length}`}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── HOME SCREEN ──────────────────────────────────────────────────────────
+  function HomeScreen(){
+    const focusDayMastered=todayDay.ids.filter(id=>getStatus(id)==='mastered').length;
+    const focusPct=Math.round((focusDayMastered/todayDay.ids.length)*100);
+    const totals=perfTotals(perf);
+    const perfPct=(t)=>{
+      const target=t.isAvg?t.dailyTarget:t.monthlyTarget;
+      return Math.min(100,Math.round(((totals[t.key]||0)/target)*100));
+    };
+    const refCards=[
+      {tab:'scripts',label:'Scripts',icon:'📞',desc:'Call flow & all scripts'},
+      {tab:'modes',label:'Freight Modes',icon:'🚛',desc:'7 modes + Cabotage'},
+      {tab:'glossary',label:'Glossary',icon:'📖',desc:'70+ terms'},
+      {tab:'valueadds',label:'Value Adds',icon:'⭐',desc:'By mode'},
+      {tab:'quotes',label:'Quote Checklists',icon:'📋',desc:'All 6 modes'},
+    ];
+    return(
+      <div className="scroll" style={S.scrollArea}>
+        <div style={{...S.hdr,paddingTop:20}}>
+          <div style={S.hdrLeft}>
+            <span style={S.hdrBrand}>PRIORITY1</span>
+            <span style={S.hdrTitle}>SALES COMPANION</span>
+          </div>
+          <button onClick={()=>saveTheme(theme==='dark'?'light':'dark')}
+            style={{background:c.surfaceHigh,border:'none',borderRadius:20,width:36,height:36,
+              display:'flex',alignItems:'center',justifyContent:'center',color:c.textSub}}>
+            {theme==='dark'?<Icon.sun color={c.textSub}/>:<Icon.moon color={c.textSub}/>}
+          </button>
+        </div>
+
+        <div style={{padding:'4px 20px 16px'}}>
+          <div style={{fontSize:17,fontWeight:600,color:c.text}}>{greeting()}, Zyan.</div>
+          <div style={{fontSize:13,color:c.textSub,marginTop:2}}>Let's get to work.</div>
+        </div>
+
+        {/* Today's Focus — Objection Drill */}
+        <div style={S.sectionLabel}>TODAY'S FOCUS — OBJECTION DRILL</div>
+        <div style={{...S.card,background:c.surface,border:`1px solid ${c.border}`}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+            <div>
+              <div style={{fontSize:10,color:c.accent,fontWeight:700,letterSpacing:'0.14em',marginBottom:3}}>
+                DAY {todayDay.num} · {todayDay.title.toUpperCase()}
+              </div>
+              <div style={{fontSize:12,color:c.textSub}}>{focusDayMastered} of {todayDay.ids.length} mastered</div>
+            </div>
+            <DayRing day={todayDay}/>
+          </div>
+          <div style={{...S.pbarTrack,marginBottom:14}}>
+            <div style={{...S.pbarFill,width:`${focusPct}%`}}/>
+          </div>
+          <button onClick={()=>startStudy(todayDay)} style={{width:'100%',padding:'13px',
+            background:c.accent,color:c.accentText,borderRadius:12,fontSize:13,
+            fontWeight:700,letterSpacing:'0.06em'}}>
+            Continue Studying →
+          </button>
+        </div>
+
+        {/* Performance Snapshot */}
+        <div style={S.sectionLabel}>THIS MONTH — {monthLabel().toUpperCase()}</div>
+        <div style={{...S.cardBorder}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+            <span style={{fontSize:12,fontWeight:600,color:c.text}}>CRM Standards Met</span>
+            <span style={{fontSize:11,fontWeight:700,color:perf.crmStandards?c.green:c.textMuted}}>
+              {perf.crmStandards?'✓ Met':'Not yet'}
+            </span>
+          </div>
+          {PERF_DAILY.map(t=>(
+            <div key={t.key} style={{marginBottom:8}}>
+              <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:3}}>
+                <span style={{color:c.textSub}}>{t.label}</span>
+                <span style={{color:c.text,fontWeight:700}}>
+                  {t.isAvg
+                    ? `${(totals[t.key]||0).toFixed(1)} avg / ${t.dailyTarget} ${t.unit} (${totals[t.key+'_days']||0} days)`
+                    : `${t.unit==='$'?'$':''}${Math.round(totals[t.key]||0)} / ${t.monthlyTarget}`}
+                </span>
+              </div>
+              <div style={S.pbarTrack}>
+                <div style={{...S.pbarFill,width:`${perfPct(t)}%`,
+                  background:perfPct(t)>=100?c.green:c.accent}}/>
+              </div>
+            </div>
+          ))}
+          <button onClick={()=>{setView('journal');setJournalTab('performance');}}
+            style={{width:'100%',padding:'10px',marginTop:6,background:c.surfaceHigh,
+              border:`1px solid ${c.border}`,borderRadius:10,color:c.textSub,
+              fontSize:11,fontWeight:700,letterSpacing:'0.06em'}}>
+            Log Today's Numbers →
+          </button>
+        </div>
+
+        {/* Reference Quick Links */}
+        <div style={S.sectionLabel}>REFERENCE</div>
+        <div style={{padding:'0 20px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:8}}>
+          {refCards.map(rc=>(
+            <div key={rc.tab} onClick={()=>{setRefTab(rc.tab);setCollapsedRefIds(new Set());setRefSearch('');setView('reference');}}
+              style={{...S.cardBorder,margin:0,padding:'14px',cursor:'pointer',display:'flex',
+                flexDirection:'column',gap:4}}>
+              <div style={{fontSize:22}}>{rc.icon}</div>
+              <div style={{fontSize:12,fontWeight:700,color:c.text}}>{rc.label}</div>
+              <div style={{fontSize:10,color:c.textSub}}>{rc.desc}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Overall objection progress */}
+        <div style={S.sectionLabel}>OBJECTION MASTERY</div>
+        <div style={{...S.cardBorder}}>
+          <div style={{display:'flex',alignItems:'center',gap:20}}>
+            <CircleChart pct={masterPct} size={90} sw={8} color={c.accent} bg={c.surfaceHigh}>
+              <div style={{fontSize:18,fontWeight:700,color:c.text}}>{masterPct}%</div>
+            </CircleChart>
+            <div style={{flex:1,display:'flex',flexDirection:'column',gap:8}}>
+              {[['mastered',masterCount],['learning',learnCount],['toReview',reviewCount],['notStarted',notStartCount]].map(([s,n])=>(
+                <div key={s} style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div style={{width:8,height:8,borderRadius:4,background:STATUS_COLOR[s],flexShrink:0}}/>
+                  <div style={{flex:1,fontSize:11,color:c.textSub}}>{STATUS_LABEL[s]}</div>
+                  <div style={{fontSize:12,fontWeight:700,color:c.text}}>{n}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── STUDY (OBJECTION DRILLER) ─────────────────────────────────────────────
+  function StudyScreen(){
+    if(studyView==='card')return FlashCard();
+    if(studyView==='setList'&&selDay)return SetList();
+    return DayList();
+  }
+
+  function DayList(){
+    return(
+      <div className="scroll" style={S.scrollArea}>
+        <div style={S.hdr}>
+          <div style={S.hdrLeft}>
+            <span style={S.hdrBrand}>PRIORITY1</span>
+            <span style={S.hdrTitle}>Study by Day</span>
+          </div>
+        </div>
+        {DAYS.map(day=>{
+          return(
+            <div key={day.id} style={S.dayItem} onClick={()=>openSetList(day)}>
+              <DayRing day={day}/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:600,color:c.text}}>Day {day.num} — {day.title}</div>
+                <div style={{fontSize:11,color:c.textSub,marginTop:2}}>{day.sub}</div>
+              </div>
+              <Icon.chevron color={c.textMuted}/>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function SetList(){
+    const day=selDay;
+    const done=day.ids.filter(id=>getStatus(id)==='mastered').length;
+    const pct=Math.round((done/day.ids.length)*100);
+    return(
+      <div className="scroll" style={S.scrollArea}>
+        <div style={S.hdr}>
+          <button onClick={()=>setStudyView('dayList')}
+            style={{background:'none',color:c.textSub,display:'flex',alignItems:'center',gap:4,
+              fontSize:13,fontWeight:600,padding:'4px 0'}}>
+            <Icon.back color={c.textSub} size={18}/>Study
+          </button>
+        </div>
+        <div style={{padding:'0 20px 14px'}}>
+          <div style={{fontSize:10,color:c.accent,fontWeight:700,letterSpacing:'0.14em',marginBottom:4}}>DAY {day.num}</div>
+          <div style={{fontSize:18,fontWeight:700}}>{day.title}</div>
+          <div style={{fontSize:12,color:c.textSub,marginTop:2}}>{done} of {day.ids.length} mastered</div>
+          <div style={{...S.pbarTrack,marginTop:10}}><div style={{...S.pbarFill,width:`${pct}%`}}/></div>
+        </div>
+        {day.ids.map(id=>{
+          const obj=OBJ.find(o=>o.id===id);
+          const s=getStatus(id);
+          return(
+            <div key={id} style={S.setItem} onClick={()=>{
+              const queueCards=buildQueue(day);
+              setQueue(queueCards);
+              const pos=queueCards.findIndex(cc=>cc.id===id);
+              setQIdx(Math.max(0,pos));setParts(0);setHinted(false);setRevealed(false);
+              setStudyView('card');
+            }}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,color:c.text,marginBottom:3}}>{obj.name}</div>
+                <div style={{fontSize:11,color:c.textSub,fontFamily:'DM Mono,Courier New,monospace',
+                  overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:220}}>"{obj.trigger}"</div>
+                <div style={{fontSize:10,color:c.textMuted,marginTop:4}}>{reps[id]||0} rehearsal{(reps[id]||0)===1?'':'s'}</div>
+              </div>
+              <Badge status={s}/>
+            </div>
+          );
+        })}
+        <div style={{padding:'14px 20px'}}>
+          <button onClick={()=>startStudy(day)} style={{width:'100%',padding:'14px',
+            background:c.accent,color:c.accentText,borderRadius:12,fontSize:13,fontWeight:700,letterSpacing:'0.06em'}}>
+            Study This Day
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── FLASHCARD ────────────────────────────────────────────────────────────
+  function FlashCard(){
+    if(!card){
+      return(
+        <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',
+          justifyContent:'center',gap:16,padding:24,textAlign:'center'}}>
+          <div style={{fontSize:44}}>🎉</div>
+          <div style={{fontSize:20,fontWeight:700}}>Day Complete!</div>
+          <div style={{fontSize:13,color:c.textSub}}>
+            {selDay?`${selDay.ids.filter(id=>getStatus(id)==='mastered').length} / ${selDay.ids.length} mastered`:''}
+          </div>
+          <button onClick={()=>setStudyView('setList')} style={{marginTop:8,padding:'14px 32px',
+            background:c.accent,color:c.accentText,borderRadius:12,fontSize:13,fontWeight:700}}>
+            Back to Set →
+          </button>
+        </div>
+      );
+    }
+    const s=getStatus(card.id);
+    const dayObj=DAYS.find(d=>d.id===card.day)||DAYS[0];
+    const activeDayIds=(selDay?selDay.ids:dayObj.ids);
+    const originalTotal=activeDayIds.length;
+    const dayMastered=activeDayIds.filter(id=>getStatus(id)==='mastered').length;
+    const dayMasteredPct=Math.round((dayMastered/originalTotal)*100);
+    const repCount=reps[card.id]||0;
+
+    return(
+      <div className="scroll" style={S.scrollArea}>
+        <div style={S.hdr}>
+          <button onClick={()=>setStudyView('setList')}
+            style={{background:'none',color:c.textSub,display:'flex',alignItems:'center',gap:4,
+              fontSize:13,fontWeight:600,padding:'4px 0'}}>
+            <Icon.back color={c.textSub} size={18}/>{selDay?selDay.title:'Study'}
+          </button>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <button onClick={()=>saveQuizMode(!quizMode)}
+              style={{padding:'4px 10px',borderRadius:20,border:`1px solid ${quizMode?'#a78bfa':c.border}`,
+                background:quizMode?'#1e1040':'none',color:quizMode?'#a78bfa':c.textSub,
+                fontSize:9,fontWeight:700,letterSpacing:'0.1em',cursor:'pointer'}}>
+              {quizMode?'👥 QUIZ':'👤 SOLO'}
+            </button>
+            <span style={{fontSize:11,color:c.textMuted}}>{repCount} rep{repCount===1?'':'s'}</span>
+            <span style={{fontSize:12,color:c.textSub,fontWeight:700}}>{dayMastered} / {originalTotal} mastered</span>
+          </div>
+        </div>
+        <div style={{height:3,background:c.surfaceHigh,margin:'0 20px 14px'}}>
+          <div style={{height:'100%',background:c.accent,borderRadius:2,width:`${dayMasteredPct}%`,transition:'width 0.3s'}}/>
+        </div>
+
+        {!revealed&&(
+          <div className="fade-in" style={S.flashFront} onClick={()=>setRevealed(true)}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+              <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                {quizMode&&<div style={{fontSize:9,color:'#a78bfa',letterSpacing:'0.14em',fontWeight:700}}>👥 QUIZ MODE — READ ALOUD TO ZYAN ↓</div>}
+                <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.18em',color:c.accent}}>OBJECTION</div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <Badge status={s}/>
+                {!quizMode&&<button onClick={e=>{e.stopPropagation();setHinted(h=>!h);}}
+                  style={{padding:'4px 10px',background:hinted?`${c.accent}22`:'none',
+                    border:`1px solid ${hinted?c.accent:c.border}`,borderRadius:20,
+                    fontSize:10,fontWeight:700,color:hinted?c.accent:c.textSub,
+                    letterSpacing:'0.06em',transition:'all 0.15s'}}>💡 hint</button>}
+              </div>
+            </div>
+            <div className="mono" style={{fontSize:17,lineHeight:1.55,color:c.text,fontStyle:'italic',marginBottom:hinted?10:6}}>"{card.trigger}"</div>
+            <div style={{fontSize:11,color:c.textMuted,marginBottom:hinted?12:8}}>Rehearsed {repCount} time{repCount===1?'':'s'}</div>
+            {hinted&&(
+              <div style={{background:c.why,borderRadius:12,padding:'12px 14px',border:`1px solid ${c.whyBorder}`}}>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.16em',color:c.whyText,marginBottom:5}}>💡 HINT</div>
+                <div style={{fontSize:12,lineHeight:1.6,color:c.whyText}}>{card.hint}</div>
+              </div>
+            )}
+            {!hinted&&(
+              <div style={{display:'flex',justifyContent:'center',alignItems:'center',gap:6,marginTop:8,color:c.textSub}}>
+                <span style={{fontSize:11,letterSpacing:'0.08em'}}>{quizMode?'Tap when Zyan is done — reveal to check':'Tap to reveal answer'}</span>
+                <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
+            )}
+          </div>
+        )}
+
+        {revealed&&(
+          <div className="fade-in">
+            {card.parts.slice(0,parts===0?1:parts+1).map((p,i)=>{
+              if(i>=parts+1)return null;
+              const {label,text}=parsePart(p,i,totalParts);
+              return(
+                <div key={i} className="fade-in" style={S.flashBack} onClick={()=>{setParts(0);setRevealed(false);}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                    <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.18em',color:'#60a5fa'}}>{label}</div>
+                    {i===0&&<div style={{fontSize:9,color:c.textMuted}}>tap to hide</div>}
+                  </div>
+                  <div className="mono" style={{fontSize:13,lineHeight:1.75,color:theme==='dark'?'#d0e0ff':'#1e3a5f',whiteSpace:'pre-line'}}>{text}</div>
+                </div>
+              );
+            })}
+
+            {revealed&&parts<totalParts-1&&(()=>{
+              const np=card.parts[parts+1];
+              const {label:nxtLabel}=np?parsePart(np,parts+1,totalParts):{label:null};
+              const isGeneric=!nxtLabel||nxtLabel.startsWith('PART ');
+              const btnText=isGeneric?'NEXT →':`${nxtLabel} →`;
+              return(
+              <div style={{padding:'0 16px 10px'}}>
+                {quizMode&&!isGeneric&&<div style={{fontSize:9,color:'#60a5fa',letterSpacing:'0.1em',textAlign:'center',marginBottom:5,fontWeight:700}}>COACH: THIS IS THE NEXT SCENARIO ↓</div>}
+                <button onClick={()=>setParts(p=>p+1)} style={{width:'100%',padding:'14px',background:c.surfaceHigh,
+                  border:`1px solid ${c.flashBorder}`,borderRadius:12,color:'#60a5fa',fontSize:12,fontWeight:700,
+                  letterSpacing:'0.06em',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                  <span style={{fontSize:10,color:c.textSub}}>PART {parts+2} OF {totalParts}</span>
+                  <span>{btnText}</span>
+                </button>
+              </div>
+              );
+            })()}
+
+            {revealed&&parts>=totalParts-1&&(
+              <div className="fade-in" style={S.whyBox}>
+                <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.18em',color:c.whyText,marginBottom:6}}>WHY THIS WORKS</div>
+                <div style={{fontSize:12,lineHeight:1.65,color:c.whyText}}>{card.why}</div>
+              </div>
+            )}
+
+            {revealed&&parts>=totalParts-1&&(
+              <>
+                <div style={{padding:'4px 16px 10px'}}>
+                  <button onClick={rehearseCard} style={S.rehearseBtn}>
+                    <span style={{fontSize:15}}>↻</span><span>REHEARSE +1 REP</span>
+                    <span style={{fontSize:11,color:theme==='dark'?'#93c5fd':'#1d4ed8'}}>({repCount})</span>
+                  </button>
+                  <div style={{fontSize:10,color:c.textMuted,textAlign:'center',marginTop:6}}>Use this when you want to run the same line again before rating it.</div>
+                </div>
+                <div style={S.actionRow}>
+                  <button onClick={()=>advance('toReview')} style={{...S.actionBtn('#ef4444','#1a0505')}}>
+                    <span style={{fontSize:16}}>↩</span><span style={{fontSize:9,letterSpacing:'0.06em'}}>{quizMode?'RETRY':'AGAIN'}</span>
+                  </button>
+                  <button onClick={()=>advance('learning')} style={{...S.actionBtn('#f59e0b','#1c1206')}}>
+                    <span style={{fontSize:16}}>◐</span><span style={{fontSize:9,letterSpacing:'0.06em'}}>{quizMode?'CLOSE':'LEARNING'}</span>
+                  </button>
+                  <button onClick={()=>advance('mastered')} style={{...S.actionBtn('#22c55e','#052e16')}}>
+                    <span style={{fontSize:16}}>✓</span><span style={{fontSize:9,letterSpacing:'0.06em'}}>{quizMode?'NAILED IT':'MASTERED'}</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ─── REFERENCE SCREEN ───────────────────────────────────────────────────────
+  function ReferenceScreen(){
+    const DATASETS={scripts:SCRIPTS,modes:MODES,valueadds:VALUEADDS,quotes:QUOTES};
+    const tabs=[
+      {id:'scripts',label:'Scripts'},{id:'modes',label:'Modes'},{id:'glossary',label:'Glossary'},
+      {id:'valueadds',label:'Value Adds'},{id:'quotes',label:'Quotes'},
+    ];
+    const q=refSearch.trim().toLowerCase();
+    const ALL_GLOSSARY=[...GLOSSARY,...customGlossary];
+    const ALL_GLOSSARY_SECTIONS=customGlossary.length?[...GLOSSARY_SECTIONS,'Custom (AI-Added)']:GLOSSARY_SECTIONS;
+
+    let items=[];
+    if(refTab==='glossary'){
+      items=ALL_GLOSSARY.filter(g=>!q||g.term.toLowerCase().includes(q)||g.def.toLowerCase().includes(q)||g.section.toLowerCase().includes(q));
+    } else {
+      const data=DATASETS[refTab]||[];
+      items=data.filter(d=>!q||d.name.toLowerCase().includes(q)||d.md.toLowerCase().includes(q));
+    }
+
+    return(
+      <div className="scroll" style={S.scrollArea}>
+        <div ref={refTopBarRef} style={{position:'sticky',top:0,zIndex:20,background:c.bg}}>
+          <div style={S.hdr}>
+            <div style={S.hdrLeft}>
+              <span style={S.hdrBrand}>PRIORITY1</span>
+              <span style={S.hdrTitle}>Reference</span>
+            </div>
+          </div>
+
+          {/* Search */}
+          <div style={{padding:'0 20px 10px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,background:c.surfaceHigh,
+              borderRadius:12,padding:'9px 12px',border:`1px solid ${c.border}`}}>
+              <Icon.search size={16} color={c.textSub}/>
+              <input value={refSearch} onChange={e=>setRefSearch(e.target.value)}
+                placeholder="Search..." style={{flex:1,background:'none',border:'none',outline:'none',
+                color:c.text,fontSize:13}}/>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div style={{display:'flex',gap:6,padding:'0 20px 12px',overflowX:'auto'}} className="scroll">
+            {tabs.map(t=>(
+              <button key={t.id} onClick={()=>{setRefTab(t.id);setCollapsedRefIds(new Set());}} style={S.chipBtn(refTab===t.id)}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+
+
+        {/* Glossary list */}
+        {refTab==='glossary'&&(
+          <>
+            {ALL_GLOSSARY_SECTIONS.map(sec=>{
+              const secItems=items.filter(g=>g.section===sec);
+              if(secItems.length===0)return null;
+              return(
+                <div key={sec}>
+                  <div style={{position:'sticky',top:refTopBarHeight,zIndex:10,
+                    margin:'0 0 8px',padding:'10px 20px',background:c.bg,
+                    borderBottom:`1px solid ${c.border}`,
+                    borderLeft:`3px solid ${c.accent}`}}>
+                    <span style={{fontSize:12,fontWeight:800,letterSpacing:'0.14em',color:c.accent}}>{sec.toUpperCase()}</span>
+                  </div>
+                  {secItems.map((g,idx)=>(
+                    <div key={idx} style={{...S.cardBorder,padding:'12px 16px'}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8}}>
+                        <div style={{fontSize:13,fontWeight:700,color:c.text,marginBottom:4}}>{g.term}</div>
+                        {sec==='Custom (AI-Added)'&&(
+                          <button onClick={()=>saveCustomGlossary(customGlossary.filter(cg=>cg!==g))}
+                            style={{background:'none',color:c.textMuted,fontSize:10,flexShrink:0}}>delete</button>
+                        )}
+                      </div>
+                      <div style={{fontSize:12,lineHeight:1.6,color:c.textSub}}>{g.def}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+            {items.length===0&&<div style={{padding:'30px 20px',textAlign:'center',color:c.textMuted,fontSize:13}}>No terms found.</div>}
+          </>
+        )}
+
+        {/* Scripts / Modes / Value Adds / Quotes — open by default, collapsible */}
+        {refTab!=='glossary'&&items.map(item=>{
+          const key=`${refTab}-${item.id}`;
+          const open=!collapsedRefIds.has(key);
+          const toggle=()=>{
+            const next=new Set(collapsedRefIds);
+            if(open)next.add(key); else next.delete(key);
+            setCollapsedRefIds(next);
+          };
+          return(
+            <div key={key} style={{...S.cardBorder,padding:0,overflow:'hidden'}}>
+              <div onClick={toggle}
+                style={{padding:'14px 16px',display:'flex',justifyContent:'space-between',
+                  alignItems:'center',cursor:'pointer'}}>
+                <span style={{fontSize:13,fontWeight:700,color:c.text}}>{item.name}</span>
+                <div style={{transform:open?'rotate(90deg)':'none',transition:'transform 0.15s'}}>
+                  <Icon.chevron color={c.textMuted} size={16}/>
+                </div>
+              </div>
+              {open&&<div style={{padding:'0 16px 14px'}}><MD text={item.md} c={c}/></div>}
+            </div>
+          );
+        })}
+        {refTab!=='glossary'&&items.length===0&&<div style={{padding:'30px 20px',textAlign:'center',color:c.textMuted,fontSize:13}}>No results.</div>}
+      </div>
+    );
+  }
+
+  // ─── JOURNAL & PERFORMANCE SCREEN ─────────────────────────────────────────
+  function JournalScreen(){
+    const submitEntry=async()=>{
+      if(!entryForm.whatHappened.trim())return;
+      const entry={id:Date.now(),...entryForm,createdAt:Date.now()};
+      const next=[entry,...entries].sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt-a.createdAt);
+      await saveEntries(next);
+      setEntryForm({date:todayKey(),whatHappened:'',whatWorked:'',whatDifficult:'',lesson:'',nextAction:''});
+      setShowAddEntry(false);
+      showToast('Journal entry saved');
+    };
+    const deleteEntry=async(id)=>{
+      const next=entries.filter(e=>e.id!==id);
+      await saveEntries(next);
+    };
+
+    return(
+      <div className="scroll" style={S.scrollArea}>
+        <div style={S.hdr}>
+          <div style={S.hdrLeft}>
+            <span style={S.hdrBrand}>PRIORITY1</span>
+            <span style={S.hdrTitle}>Journal</span>
+          </div>
+        </div>
+
+        <div style={{display:'flex',gap:6,padding:'0 20px 12px'}}>
+          <button onClick={()=>setJournalTab('journal')} style={S.chipBtn(journalTab==='journal')}>Journal</button>
+          <button onClick={()=>setJournalTab('performance')} style={S.chipBtn(journalTab==='performance')}>Performance</button>
+          <button onClick={()=>setJournalTab('accounts')} style={S.chipBtn(journalTab==='accounts')}>Accounts</button>
+        </div>
+
+        {storageError&&(
+          <div style={{margin:'0 20px 12px',padding:'10px 14px',background:c.why,border:`1px solid ${c.whyBorder}`,
+            borderRadius:10,fontSize:11,color:c.whyText}}>
+            Couldn't sync to storage — changes may not persist. Try again in a moment.
+          </div>
+        )}
+
+        {journalTab==='journal'&&(
+          <>
+            {!showAddEntry&&(
+              <div style={{padding:'0 20px 12px'}}>
+                <button onClick={()=>setShowAddEntry(true)} style={{width:'100%',padding:'13px',
+                  background:c.accent,color:c.accentText,borderRadius:12,fontSize:13,fontWeight:700,
+                  letterSpacing:'0.06em',display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
+                  <Icon.plus size={16} color={c.accentText}/> New Entry
+                </button>
+              </div>
+            )}
+
+            {showAddEntry&&(
+              <div style={{...S.cardBorder}}>
+                <label style={S.label}>DATE</label>
+                <input type="date" max={todayKey()} value={entryForm.date}
+                  onChange={e=>setEntryForm(f=>({...f,date:e.target.value}))}
+                  style={{...S.input,marginBottom:12}}/>
+                <label style={S.label}>WHAT HAPPENED</label>
+                <textarea style={{...S.input,marginBottom:10}} rows={2} value={entryForm.whatHappened}
+                  onChange={e=>setEntryForm(f=>({...f,whatHappened:e.target.value}))}
+                  placeholder="Calls made, meetings, quotes sent..."/>
+                <label style={S.label}>WHAT WORKED</label>
+                <textarea style={{...S.input,marginBottom:10}} rows={2} value={entryForm.whatWorked}
+                  onChange={e=>setEntryForm(f=>({...f,whatWorked:e.target.value}))}/>
+                <label style={S.label}>WHAT WAS DIFFICULT</label>
+                <textarea style={{...S.input,marginBottom:10}} rows={2} value={entryForm.whatDifficult}
+                  onChange={e=>setEntryForm(f=>({...f,whatDifficult:e.target.value}))}/>
+                <label style={S.label}>LESSON</label>
+                <textarea style={{...S.input,marginBottom:10}} rows={2} value={entryForm.lesson}
+                  onChange={e=>setEntryForm(f=>({...f,lesson:e.target.value}))}/>
+                <label style={S.label}>NEXT ACTION</label>
+                <textarea style={{...S.input,marginBottom:14}} rows={2} value={entryForm.nextAction}
+                  onChange={e=>setEntryForm(f=>({...f,nextAction:e.target.value}))}/>
+                <div style={{display:'flex',gap:10}}>
+                  <button onClick={()=>{setShowAddEntry(false);setEntryForm({date:todayKey(),whatHappened:'',whatWorked:'',whatDifficult:'',lesson:'',nextAction:''});}}
+                    style={{flex:1,padding:'12px',background:c.surfaceHigh,border:`1px solid ${c.border}`,
+                      borderRadius:10,color:c.textSub,fontSize:12,fontWeight:700}}>Cancel</button>
+                  <button onClick={submitEntry} style={{flex:1,padding:'12px',background:c.accent,
+                    color:c.accentText,borderRadius:10,fontSize:12,fontWeight:700}}>Save Entry</button>
+                </div>
+              </div>
+            )}
+
+            {!entriesLoaded&&<div style={{padding:'30px 20px',textAlign:'center',color:c.textMuted,fontSize:13}}>Loading journal...</div>}
+            {entriesLoaded&&entries.length===0&&!showAddEntry&&(
+              <div style={{padding:'30px 20px',textAlign:'center',color:c.textMuted,fontSize:13}}>
+                No entries yet. Tap "New Entry" after your first day back on the phones.
+              </div>
+            )}
+            {entries.map(e=>(
+              <div key={e.id} style={S.cardBorder}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                  <div style={{fontSize:11,color:c.accent,fontWeight:700,letterSpacing:'0.08em'}}>
+                    {new Date(e.date+'T00:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}
+                  </div>
+                  <button onClick={()=>deleteEntry(e.id)} style={{background:'none',color:c.textMuted,fontSize:11}}>delete</button>
+                </div>
+                {e.whatHappened&&<div style={{marginBottom:6}}><div style={{fontSize:9,fontWeight:700,color:c.textSub,letterSpacing:'0.08em',marginBottom:2}}>WHAT HAPPENED</div><div style={{fontSize:12,color:c.text,lineHeight:1.5}}>{e.whatHappened}</div></div>}
+                {e.whatWorked&&<div style={{marginBottom:6}}><div style={{fontSize:9,fontWeight:700,color:STATUS_COLOR.mastered,letterSpacing:'0.08em',marginBottom:2}}>WHAT WORKED</div><div style={{fontSize:12,color:c.text,lineHeight:1.5}}>{e.whatWorked}</div></div>}
+                {e.whatDifficult&&<div style={{marginBottom:6}}><div style={{fontSize:9,fontWeight:700,color:STATUS_COLOR.toReview,letterSpacing:'0.08em',marginBottom:2}}>WHAT WAS DIFFICULT</div><div style={{fontSize:12,color:c.text,lineHeight:1.5}}>{e.whatDifficult}</div></div>}
+                {e.lesson&&<div style={{marginBottom:6}}><div style={{fontSize:9,fontWeight:700,color:c.whyText,letterSpacing:'0.08em',marginBottom:2}}>LESSON</div><div style={{fontSize:12,color:c.text,lineHeight:1.5}}>{e.lesson}</div></div>}
+                {e.nextAction&&<div><div style={{fontSize:9,fontWeight:700,color:c.purple,letterSpacing:'0.08em',marginBottom:2}}>NEXT ACTION</div><div style={{fontSize:12,color:c.text,lineHeight:1.5}}>{e.nextAction}</div></div>}
+              </div>
+            ))}
+          </>
+        )}
+
+        {journalTab==='performance'&&(()=>{
+          const days=perfView.days||{};
+          const entryForDate=days[perfDate]||{};
+          const totals=perfTotals(perfView);
+          const isToday=perfDate===todayKey();
+          const setDateField=(key,val)=>{
+            const num=Math.max(0,Number(val)||0); // never allow negative
+            const nextDays={...days,[perfDate]:{...entryForDate,[key]:num}};
+            savePerf({...perfView,days:nextDays});
+          };
+          const toggleCRM=()=>{ savePerf({...perfView,crmStandards:!perfView.crmStandards}); };
+          return(
+          <>
+            <div style={{padding:'0 20px 4px',fontSize:12,color:c.textSub}}>
+              Log any work day's numbers — pick a date below if you missed a day. Monthly totals (and talk-time average) update automatically.
+            </div>
+
+            {/* DATE PICKER */}
+            <div style={{padding:'10px 20px 4px',display:'flex',alignItems:'center',gap:10}}>
+              <input type="date" max={todayKey()} value={perfDate}
+                onChange={e=>setPerfDate(e.target.value)}
+                style={{...S.input,flex:1}}/>
+              {!isToday&&(
+                <button onClick={()=>setPerfDate(todayKey())}
+                  style={{padding:'10px 14px',borderRadius:10,background:c.surfaceHigh,
+                    border:`1px solid ${c.border}`,color:c.accent,fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>
+                  Jump to Today
+                </button>
+              )}
+            </div>
+
+            {/* SELECTED DAY ENTRY */}
+            <div style={S.sectionLabel}>
+              {isToday?'TODAY':new Date(perfDate+'T00:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'}).toUpperCase()}
+            </div>
+            <div style={S.cardBorder}>
+              {PERF_DAILY.map(t=>(
+                <div key={t.key} style={{marginBottom:12,display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
+                  <span style={{fontSize:12,fontWeight:600,color:c.text}}>
+                    {t.label}{t.isAvg?` (${t.unit})`:t.unit==='$'?' ($)':''}
+                  </span>
+                  <input type="number" min="0" value={entryForDate[t.key]??0}
+                    onChange={e=>setDateField(t.key,e.target.value)}
+                    onFocus={e=>e.target.select()}
+                    style={{...S.input,width:80,textAlign:'center'}}/>
+                </div>
+              ))}
+              {!perfViewLoaded&&<div style={{textAlign:'center',color:c.textMuted,fontSize:12}}>Loading...</div>}
+            </div>
+
+            {/* CRM STANDARDS - monthly yes/no */}
+            <div style={S.sectionLabel}>CRM STANDARDS — {monthLabelFor(perfDate).toUpperCase()}</div>
+            <div style={S.cardBorder}>
+              <button onClick={toggleCRM}
+                style={{width:'100%',padding:'12px',borderRadius:10,
+                  background:perfView.crmStandards?`${c.green}22`:c.surfaceHigh,
+                  border:`1px solid ${perfView.crmStandards?c.green:c.border}`,
+                  color:perfView.crmStandards?c.green:c.textSub,fontSize:12,fontWeight:700}}>
+                {perfView.crmStandards?'✓ Met this month':'Mark as met for this month'}
+              </button>
+            </div>
+
+            {/* MONTHLY TOTALS */}
+            <div style={S.sectionLabel}>{monthLabelFor(perfDate).toUpperCase()} — MONTH TO DATE</div>
+            <div style={S.cardBorder}>
+              {PERF_DAILY.map(t=>{
+                const target=t.isAvg?t.dailyTarget:t.monthlyTarget;
+                const val=totals[t.key]||0;
+                const pct=Math.min(100,Math.round((val/target)*100));
+                return(
+                  <div key={t.key} style={{marginBottom:14}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                      <span style={{fontSize:12,fontWeight:600,color:c.text}}>{t.label}</span>
+                      <span style={{fontSize:11,color:c.textSub}}>
+                        {t.isAvg
+                          ? `avg ${val.toFixed(1)} / ${target} ${t.unit} · ${totals[t.key+'_days']||0} days logged`
+                          : `${t.unit==='$'?'$':''}${Math.round(val)} / ${target}`}
+                      </span>
+                    </div>
+                    <div style={S.pbarTrack}>
+                      <div style={{...S.pbarFill,width:`${pct}%`,background:pct>=100?c.green:c.accent}}/>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{padding:'0 20px',fontSize:11,color:c.textMuted,lineHeight:1.6}}>
+              Pick any date above to log a missed day — totals for that day's month update automatically.
+              A new tracker starts each calendar month. Numbers can't go negative.
+            </div>
+          </>
+          );
+        })()}
+
+        {journalTab==='accounts'&&(
+          <>
+            <div style={{...S.cardBorder,borderColor:c.accent}}>
+              <MD text={OPEN_ITEMS_MD} c={c}/>
+            </div>
+            {CASESTUDIES.map(item=>{
+              const open=!collapsedAcctIds.has(item.id);
+              const toggle=()=>{
+                const next=new Set(collapsedAcctIds);
+                if(open)next.add(item.id); else next.delete(item.id);
+                setCollapsedAcctIds(next);
+              };
+              return(
+                <div key={item.id} style={{...S.cardBorder,padding:0,overflow:'hidden'}}>
+                  <div onClick={toggle}
+                    style={{padding:'14px 16px',display:'flex',justifyContent:'space-between',
+                      alignItems:'center',cursor:'pointer'}}>
+                    <span style={{fontSize:13,fontWeight:700,color:c.text}}>{item.name}</span>
+                    <div style={{transform:open?'rotate(90deg)':'none',transition:'transform 0.15s'}}>
+                      <Icon.chevron color={c.textMuted} size={16}/>
+                    </div>
+                  </div>
+                  {open&&<div style={{padding:'0 16px 14px'}}><MD text={item.md} c={c}/></div>}
+                </div>
+              );
+            })}
+            <div style={{padding:'4px 20px 0',fontSize:11,color:c.textMuted,lineHeight:1.6}}>
+              🟦 Live personal account data — not official Priority1 policy. Update this section as these accounts progress.
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ─── AI COACH SCREEN ──────────────────────────────────────────────────────
+  function buildContextBlock(mode,query){
+    if(mode==='roleplay'){
+      return OBJ.map(o=>`### ${o.name}\nTrigger: "${o.trigger}"\nHint: ${o.hint}\nOfficial response: ${o.parts.join(' ')}\nWhy it works: ${o.why}`).join('\n\n');
+    }
+    const chunks=retrieveContext(query,5);
+    if(chunks.length===0)return "(No directly matching content found in Zyan's reference library for this query — answer from general knowledge, and say so.)";
+    return chunks.map(c=>`### [${c.source}] ${c.title}\n${c.text}`).join('\n\n');
+  }
+
+  function CoachScreen(){
+    const sendCoachMessage=async(textOverride)=>{
+      const text=(textOverride??coachInput).trim();
+      if(!text||coachLoading)return;
+      if(!geminiKey){ setCoachError('no-key'); return; }
+      setCoachError(null);
+      const userMsg={role:'user',text};
+      const nextMessages=[...coachMessages,userMsg];
+      setCoachMessages(nextMessages);
+      setCoachInput('');
+      setCoachLoading(true);
+      try{
+        const context=buildContextBlock(coachMode,text);
+        const base=coachMode==='roleplay'?ROLEPLAY_SYSTEM_PROMPT:COACH_SYSTEM_PROMPT;
+        const sysPrompt=`${base}\n\nCONTEXT:\n${context}`;
+        const {text:reply}=await callGemini({apiKey:geminiKey,model:geminiModel,systemPrompt:sysPrompt,
+          messages:nextMessages,useSearch:coachUseSearch&&coachMode==='chat'});
+        setCoachMessages([...nextMessages,{role:'assistant',text:reply}]);
+      }catch(e){
+        let msg="Something went wrong talking to Gemini.";
+        if(e.message==='NO_KEY')msg='No API key set — add one in Settings.';
+        else if(/^HTTP_4/.test(e.message))msg=`Gemini rejected the request (${e.message.split(':')[0]}). Check your API key and model name in Settings.`;
+        else if(/^HTTP_/.test(e.message))msg=`Gemini error: ${e.message.slice(0,100)}`;
+        else msg=`${e.name||'Error'}: ${e.message||'unknown'} — if this says "Failed to fetch", the network request itself was blocked (often a preview/sandbox restriction — try this in your real downloaded browser, not an embedded preview).`;
+        setCoachError(msg);
+      }
+      setCoachLoading(false);
+    };
+
+    const saveAsGlossaryTerm=(text)=>{
+      const term=window.prompt("Save this as a glossary term. Enter the term name:");
+      if(!term)return;
+      const def=text.length>500?text.slice(0,500)+'...':text;
+      saveCustomGlossary([...customGlossary,{term,def,section:'Custom (AI-Added)'}]);
+      showToast('Saved to Glossary');
+    };
+
+    const switchMode=(m)=>{
+      setCoachMode(m);
+      setCoachMessages([]);
+      setCoachError(null);
+    };
+
+    const SUGGESTIONS=[
+      "What's a good GP margin for flatbed right now?",
+      "Explain MVPCC like I'm new to freight",
+      "What's the difference between Volume LTL and Partial TL?",
+      "Help me draft a follow-up email for a flatbed quote",
+    ];
+
+    if(!geminiKey){
+      return(
+        <div className="scroll" style={S.scrollArea}>
+          <div style={S.hdr}>
+            <div style={S.hdrLeft}><span style={S.hdrBrand}>PRIORITY1</span><span style={S.hdrTitle}>AI Coach</span></div>
+          </div>
+          <div style={S.cardBorder}>
+            <div style={{fontSize:13,color:c.text,marginBottom:10,lineHeight:1.6}}>
+              The AI Coach uses your own Gemini API key (free from Google AI Studio), stored only on this device — never synced or shared.
+            </div>
+            <button onClick={()=>setView('settings')} style={{width:'100%',padding:'13px',
+              background:c.accent,color:c.accentText,borderRadius:12,fontSize:13,fontWeight:700,letterSpacing:'0.06em'}}>
+              Add API Key in Settings →
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return(
+      <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',paddingBottom:60}}>
+        <div style={S.hdr}>
+          <div style={S.hdrLeft}><span style={S.hdrBrand}>PRIORITY1</span><span style={S.hdrTitle}>AI Coach</span></div>
+        </div>
+
+        <div style={{display:'flex',gap:6,padding:'0 20px 10px',alignItems:'center'}}>
+          <button onClick={()=>switchMode('chat')} style={S.chipBtn(coachMode==='chat')}>💬 Coach</button>
+          <button onClick={()=>switchMode('roleplay')} style={S.chipBtn(coachMode==='roleplay')}>🎭 Roleplay</button>
+          {coachMode==='chat'&&(
+            <button onClick={()=>setCoachUseSearch(v=>!v)} style={{...S.chipBtn(coachUseSearch),marginLeft:'auto'}}>
+              🌐 Search {coachUseSearch?'ON':'OFF'}
+            </button>
+          )}
+        </div>
+
+        <div ref={coachScrollRef} className="scroll" style={{flex:1,overflowY:'auto',padding:'0 16px 8px'}}>
+          {coachMessages.length===0&&(
+            <div style={{padding:'10px 4px'}}>
+              {coachMode==='roleplay'?(
+                <div style={{...S.cardBorder,margin:'0 0 10px'}}>
+                  <div style={{fontSize:12,color:c.text,lineHeight:1.6,marginBottom:10}}>
+                    Roleplay mode: I'll play a freight prospect and throw an objection at you — picked from your 19-card library.
+                    Respond like you would on a real call. Type "feedback" any time to break character and get coaching.
+                  </div>
+                  <button onClick={()=>sendCoachMessage("Let's start — call me.")} style={{width:'100%',padding:'12px',
+                    background:c.accent,color:c.accentText,borderRadius:10,fontSize:12,fontWeight:700,letterSpacing:'0.06em'}}>
+                    Start Roleplay
+                  </button>
+                </div>
+              ):(
+                <div style={{...S.cardBorder,margin:'0 0 10px'}}>
+                  <div style={{fontSize:12,color:c.text,lineHeight:1.6,marginBottom:10}}>
+                    Ask anything — grounded in your scripts, freight modes, glossary, value adds, quotes, objections, and account case studies.
+                  </div>
+                  {SUGGESTIONS.map((s,i)=>(
+                    <button key={i} onClick={()=>sendCoachMessage(s)} style={{display:'block',width:'100%',
+                      textAlign:'left',padding:'10px 12px',marginBottom:6,background:c.surfaceHigh,
+                      border:`1px solid ${c.border}`,borderRadius:10,color:c.textSub,fontSize:12}}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {coachMessages.map((m,i)=>{
+            const isUser=m.role==='user';
+            const isCoachBreak=!isUser&&m.text.trim().startsWith('COACH:');
+            return(
+              <div key={i} style={{display:'flex',justifyContent:isUser?'flex-end':'flex-start',marginBottom:10}}>
+                <div style={{maxWidth:'85%',padding:'10px 13px',borderRadius:14,
+                  background:isUser?c.accent:(isCoachBreak?c.why:c.surfaceHigh),
+                  border:isUser?'none':`1px solid ${isCoachBreak?c.whyBorder:c.border}`,
+                  color:isUser?c.accentText:(isCoachBreak?c.whyText:c.text)}}>
+                  <div style={{fontSize:13,lineHeight:1.6,whiteSpace:'pre-wrap'}}>{m.text}</div>
+                  {!isUser&&!isCoachBreak&&(
+                    <button onClick={()=>saveAsGlossaryTerm(m.text)} style={{marginTop:8,background:'none',
+                      border:`1px solid ${c.border}`,borderRadius:8,padding:'4px 8px',fontSize:10,
+                      color:c.textSub,fontWeight:700,letterSpacing:'0.04em'}}>
+                      💾 Save to Glossary
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {coachLoading&&(
+            <div style={{display:'flex',justifyContent:'flex-start',marginBottom:10}}>
+              <div style={{padding:'10px 13px',borderRadius:14,background:c.surfaceHigh,
+                border:`1px solid ${c.border}`,color:c.textSub,fontSize:12}}>thinking…</div>
+            </div>
+          )}
+        </div>
+
+        {coachError&&(
+          <div style={{margin:'0 16px 8px',padding:'10px 14px',background:c.why,border:`1px solid ${c.whyBorder}`,
+            borderRadius:10,fontSize:11,color:c.whyText}}>
+            {coachError==='no-key'?'No API key set — add one in Settings.':coachError}
+          </div>
+        )}
+
+        <div style={{padding:'8px 16px',borderTop:`1px solid ${c.border}`,display:'flex',gap:8,alignItems:'flex-end'}}>
+          <textarea value={coachInput} onChange={e=>setCoachInput(e.target.value)}
+            onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendCoachMessage(); } }}
+            placeholder={coachMode==='roleplay'?"Respond to the prospect...":"Ask the coach..."}
+            rows={1} style={{...S.input,flex:1,resize:'none',maxHeight:80}}/>
+          <button onClick={()=>sendCoachMessage()} disabled={coachLoading}
+            style={{width:44,height:44,borderRadius:12,background:c.accent,color:c.accentText,
+              display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,opacity:coachLoading?0.5:1}}>
+            <Icon.send size={18} color={c.accentText}/>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── SETTINGS SCREEN ──────────────────────────────────────────────────────
+  function SettingsScreen(){
+    const resetDriller=()=>{
+      if(!window.confirm('Reset ALL objection driller progress (status, reps, activity)? This cannot be undone.'))return;
+      saveStatus({});saveReps({});saveActivity([]);
+    };
+    const resetJournal=()=>{
+      if(!window.confirm('Delete ALL journal entries? This cannot be undone.'))return;
+      saveEntries([]);
+    };
+    return(
+      <div className="scroll" style={S.scrollArea}>
+        <div style={S.hdr}>
+          <div style={S.hdrLeft}><span style={S.hdrBrand}>PRIORITY1</span><span style={S.hdrTitle}>Settings</span></div>
+        </div>
+
+        <div style={S.sectionLabel}>APPEARANCE</div>
+        <div style={{...S.cardBorder,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:600}}>Dark Mode</div>
+            <div style={{fontSize:12,color:c.textSub,marginTop:2}}>Currently {theme==='dark'?'dark':'light'} mode</div>
+          </div>
+          <button onClick={()=>saveTheme(theme==='dark'?'light':'dark')}
+            style={{width:50,height:28,borderRadius:14,position:'relative',
+              background:theme==='dark'?c.accent:c.surfaceHigh,border:'none'}}>
+            <div style={{width:22,height:22,borderRadius:11,background:'#fff',position:'absolute',top:3,
+              left:theme==='dark'?25:3,transition:'left 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.3)'}}/>
+          </button>
+        </div>
+
+        <div style={S.sectionLabel}>STUDY MODE</div>
+        <div style={{...S.cardBorder,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:600}}>Quiz Mode</div>
+            <div style={{fontSize:12,color:c.textSub,marginTop:2,maxWidth:220,lineHeight:1.4}}>
+              {quizMode?'Someone else is holding the phone and quizzing you.':'You are drilling solo.'}
+            </div>
+          </div>
+          <button onClick={()=>saveQuizMode(!quizMode)}
+            style={{width:50,height:28,borderRadius:14,position:'relative',
+              background:quizMode?'#7c3aed':c.surfaceHigh,border:'none',flexShrink:0}}>
+            <div style={{width:22,height:22,borderRadius:11,background:'#fff',position:'absolute',top:3,
+              left:quizMode?25:3,transition:'left 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.3)'}}/>
+          </button>
+        </div>
+
+        <div style={S.sectionLabel}>AI COACH</div>
+        <div style={S.cardBorder}>
+          <div style={{fontSize:12,color:c.textSub,lineHeight:1.6,marginBottom:12}}>
+            Get a free key at <span style={{color:c.accent}}>aistudio.google.com</span> (Google AI Studio → Get API Key).
+            Stored only on this device — never synced or shared. Don't share this file with your key already in it.
+          </div>
+          <label style={S.label}>GEMINI API KEY</label>
+          <input type="password" value={geminiKey} onChange={e=>saveGeminiKey(e.target.value)}
+            placeholder="AIza..." style={{...S.input,marginBottom:12}} autoComplete="off"/>
+          <label style={S.label}>MODEL</label>
+          <input type="text" value={geminiModel} onChange={e=>saveGeminiModel(e.target.value)}
+            placeholder="gemini-2.5-flash" style={S.input} autoComplete="off"/>
+          <div style={{fontSize:10,color:c.textMuted,marginTop:6,lineHeight:1.5}}>
+            Default: gemini-2.5-flash. If you get a model-not-found error, check ai.google.dev for current model names —
+            gemini-2.0-flash was retired in early 2026.
+          </div>
+        </div>
+
+        <div style={S.sectionLabel}>DATA</div>
+        <div style={{...S.cardBorder,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:600}}>{masterCount} objections mastered</div>
+            <div style={{fontSize:12,color:c.textSub,marginTop:2}}>{OBJ.length-masterCount} remaining</div>
+          </div>
+          <button onClick={resetDriller} style={{padding:'8px 16px',background:'#1a0505',
+            border:'1px solid #3d1010',borderRadius:10,color:'#ef4444',fontSize:12,fontWeight:700,letterSpacing:'0.06em'}}>
+            Reset
+          </button>
+        </div>
+        <div style={{...S.cardBorder,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontSize:14,fontWeight:600}}>{entries.length} journal entries</div>
+            <div style={{fontSize:12,color:c.textSub,marginTop:2}}>Stored in your account, not this browser</div>
+          </div>
+          <button onClick={resetJournal} style={{padding:'8px 16px',background:'#1a0505',
+            border:'1px solid #3d1010',borderRadius:10,color:'#ef4444',fontSize:12,fontWeight:700,letterSpacing:'0.06em'}}>
+            Reset
+          </button>
+        </div>
+
+        <div style={S.sectionLabel}>ABOUT</div>
+        <div style={{...S.cardBorder}}>
+          <div style={{fontSize:13,color:c.textSub,lineHeight:1.6}}>
+            Priority1 Sales Companion — built for Zyan Lamour.{'\n'}
+            Objection Driller (19 cards / 6 days), full call-flow scripts, freight modes,
+            glossary, value-add library, quote checklists, daily journal, and performance tracker.{'\n'}
+            Objection progress & quiz mode save to this browser. Journal and performance numbers
+            save to your account and sync across sessions.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── NAV BAR ──────────────────────────────────────────────────────────────
+  function NavBar(){
+    const tabs=[
+      {id:'home',label:'HOME',Icon:Icon.home},
+      {id:'study',label:'STUDY',Icon:Icon.study},
+      {id:'reference',label:'REFERENCE',Icon:Icon.book},
+      {id:'coach',label:'COACH',Icon:Icon.coach},
+      {id:'journal',label:'JOURNAL',Icon:Icon.journal},
+      {id:'settings',label:'SETTINGS',Icon:Icon.settings},
+    ];
+    return(
+      <nav style={S.nav}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>{setView(t.id);if(t.id==='study'&&studyView==='card')setStudyView('dayList');}}
+            style={S.navBtn(view===t.id)}>
+            <t.Icon size={19} color={view===t.id?c.accent:c.textSub}/>
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </nav>
+    );
+  }
+
+  // ─── RENDER ───────────────────────────────────────────────────────────────
+  return(
+    <div style={S.wrap}>
+      {view==='home'&&HomeScreen()}
+      {view==='study'&&StudyScreen()}
+      {view==='reference'&&ReferenceScreen()}
+      {view==='coach'&&CoachScreen()}
+      {view==='journal'&&JournalScreen()}
+      {view==='settings'&&SettingsScreen()}
+      {toast&&(<div className="fade-in" style={{position:'fixed',left:'50%',bottom:74,transform:'translateX(-50%)',
+        maxWidth:440,width:'calc(100% - 40px)',background:theme==='dark'?'#1e1e1e':'#ffffff',
+        color:c.text,border:`1px solid ${c.border}`,borderRadius:14,padding:'12px 16px',
+        boxShadow:'0 10px 30px rgba(0,0,0,0.35)',zIndex:200,textAlign:'center',
+        fontSize:12,fontWeight:700,letterSpacing:'0.04em'}}>
+        {toast}
+      </div>)}
+      {NavBar()}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
