@@ -45,7 +45,7 @@ const {useState,useEffect,useMemo,useCallback,useRef} = React;
 function load(k,fb){try{const r=localStorage.getItem(k);return r?JSON.parse(r):fb;}catch{return fb;}}
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
 
-const SK={status:'p1_status_v3',reps:'p1_reps_v2',activity:'p1_activity_v1',theme:'p1_theme',quiz:'p1_quiz',nav:'p1_nav',geminiKey:'p1_gemini_key',geminiModel:'p1_gemini_model',journal:'p1_journal_entries',customGlossary:'p1_custom_glossary'};
+const SK={status:'p1_status_v3',reps:'p1_reps_v2',activity:'p1_activity_v1',theme:'p1_theme',quiz:'p1_quiz',nav:'p1_nav',geminiKey:'p1_gemini_key',geminiModel:'p1_gemini_model',journal:'p1_journal_entries',customGlossary:'p1_custom_glossary',coachMemory:'p1_coach_memory',followups:'p1_followups'};
 function perfKey(mk){ return 'p1_'+mk; }
 
 // ─── THEME ────────────────────────────────────────────────────────────────
@@ -1184,6 +1184,36 @@ Market-education branch citing the 2023-24 freight recession → 2025-26 recover
 
 **Always closes by asking for the next live load to quote** — regardless of outcome on this one.
 
+### EXACT CALL SCRIPT — Burr Ridge Follow-up
+
+**OPENING:**
+"Hey [name], it's Zyan with Priority1 — did you get a chance to see the email I sent over with the Rochester lane? Just wanted to follow up and see if that pricing was in the ballpark for you."
+
+[Pause. Let him respond fully. Don't fill silence.]
+
+**→ IF "Yeah, looks good / in the ballpark":**
+"Awesome. So when's the next one actually moving? I'd love to lock in a live load and show you how we run it."
+[Get pickup date, confirm commodity, move toward booking.]
+
+**→ IF "It's higher than I expected / I was thinking more like $3/mile":**
+"I hear you — and I want to be straight with you about what's happening in the market right now, because that number makes sense based on what rates looked like a couple years ago.
+
+What we're actually seeing right now is that flatbed capacity has been tightening significantly. Our team just ran a market review and we're showing the highest flatbed rates since 2022. Here's why: during the freight recession in 2023 and into 2024, a lot of smaller carriers went out of business or parked their equipment because loads dried up. Now that the market is recovering and freight demand is picking back up — construction, manufacturing, infrastructure — there are fewer trucks chasing more loads. That drives the price up across the board, not just with us.
+
+The $3/mile you're thinking of was probably realistic in that down market window. Right now the whole market has moved. We're not the outlier — that's just where flatbed sits today.
+
+That said — when's your next load actually moving? Let me quote you a live one. I want to earn your business on a real shipment so you can see how we run it, not just on a paper quote."
+
+**→ IF "Way too high, that's not going to work for me":**
+"I completely understand — I'm not going to push something that doesn't fit your budget. But I want to be your backup option. Next time your usual carrier can't cover a load or comes in with a number that doesn't work, give me a call. I'll get you a rate fast.
+
+And when's the next one moving? Even just to quote it — no commitment — I want to show you what we can do on a real lane."
+
+**→ IF "Haven't looked at it yet":**
+"No problem. When do you think you'll get a chance to look it over? ... Perfect. And while I've got you — do you have anything moving in the next week or two I could quote live for you? Easiest way to see how we compare is on an actual load rather than a hypothetical."
+
+**ALWAYS CLOSE WITH:** A specific next step — a lane he'll let you quote live, a date something is moving, or a confirmed callback time. Don't hang up without a next action locked.
+
 ### Status
 Was supposed to follow up Friday but talked himself out of it ("he only ships once a month, I called last week, can wait until next week") — even though Friday would likely have been good timing. Still pending — follow up this week.
 
@@ -1309,6 +1339,37 @@ const NAV_TOOLS=[{
           enum:['journal','performance','accounts']},
       },required:['tab']},
     },
+    {
+      name:'remember',
+      description:'Save a short, durable fact or observation about Zyan to long-term coaching memory — things worth recalling in FUTURE conversations, not just this one. Examples: a recurring weakness ("Zyan tends to soften his close on price objections"), a preference, a pattern noticed across journal/performance entries, or context about an account that will matter later. Keep it to 1-2 sentences. Do not save sensitive personal info (health, finances, etc unrelated to work performance).',
+      parameters:{type:'OBJECT',properties:{
+        note:{type:'STRING',description:'The fact/observation to remember, 1-2 sentences, written so it makes sense read on its own later.'},
+      },required:['note']},
+    },
+    {
+      name:'forget',
+      description:'Remove a previously saved memory note that is now outdated or incorrect. Use the exact memory id from the "Coach Memory" section of CONTEXT.',
+      parameters:{type:'OBJECT',properties:{
+        memoryId:{type:'STRING',description:'The id of the memory note to remove, from CONTEXT.'},
+      },required:['memoryId']},
+    },
+    {
+      name:'add_followup',
+      description:'Add a follow-up/action item to the Accounts dashboard (Journal → Accounts → Open Items), optionally with an exact script Zyan can practice. Use when Zyan asks you to create, draft, or set up a follow-up, reminder, or "thing to do" — e.g. "add a follow-up for the Burr Ridge call with that script" or "remind me to check on X next week".',
+      parameters:{type:'OBJECT',properties:{
+        title:{type:'STRING',description:'Short title, e.g. "Burr Ridge flatbed follow-up call".'},
+        notes:{type:'STRING',description:'Context/notes about why this follow-up exists and what the goal is.'},
+        script:{type:'STRING',description:'Optional: an exact, verbatim script Zyan can practice for this follow-up, in markdown. Omit if not applicable.'},
+      },required:['title','notes']},
+    },
+    {
+      name:'complete_followup',
+      description:'Mark a follow-up item as done, with a brief outcome note. Use the exact followup id from the "Open Follow-ups" section of CONTEXT.',
+      parameters:{type:'OBJECT',properties:{
+        followupId:{type:'STRING',description:'The id of the follow-up to complete, from CONTEXT.'},
+        outcome:{type:'STRING',description:'Brief note on how it went / what happened.'},
+      },required:['followupId','outcome']},
+    },
   ],
 }];
 
@@ -1322,6 +1383,10 @@ function navCallDescription(fc){
     case 'go_to_objection_card': return `Open the flashcard for objection #${a.objectionId}.`;
     case 'go_to_reference_section': return `Open Reference → ${a.section}${a.searchTerm?` and search "${a.searchTerm}"`:''}.`;
     case 'go_to_journal_tab': return `Open Journal → ${a.tab}.`;
+    case 'remember': return `Save to coaching memory: "${a.note}"`;
+    case 'forget': return `Remove a saved memory note.`;
+    case 'add_followup': return `Add follow-up "${a.title}"${a.script?' with an exact script':''} to Accounts → Open Items.`;
+    case 'complete_followup': return `Mark a follow-up as done — outcome: "${a.outcome}"`;
     default: return `${fc.name}(${JSON.stringify(a)})`;
   }
 }
@@ -1404,6 +1469,11 @@ Navigation accuracy rules — these matter, get them right:
 - If Zyan names a SPECIFIC OBJECTION (e.g. "show me the Honeymoon flashcard", "open the Pass Down objection"), call go_to_objection_card with that objection's id. Do NOT call go_to_study_day in this case — the app will open the correct day automatically based on the objection's actual id.
 - Before claiming which day an objection belongs to, or before calling go_to_study_day with a specific day number, re-check the "Objection Driller — Study Days" entry in CONTEXT for the exact day-to-objection mapping. Do not rely on a day number mentioned earlier in the conversation if the current request is about a different objection — re-derive it fresh each time.
 - Each new message may be about something completely different from the previous one. Don't assume continuity (e.g. "Day 5" from a prior message) carries over unless Zyan is clearly continuing the same request.
+
+Long-term memory and follow-ups:
+- CONTEXT may include a "[Coach Memory]" section — durable notes you've saved about Zyan in past conversations (patterns, preferences, recurring weaknesses). Use these naturally to personalize coaching, the same way a human coach would remember past sessions.
+- Use the "remember" function to save a new durable note when you notice something worth recalling later — a pattern across journal/performance entries, a recurring objection weakness, account context that will matter again. Don't overuse it; only save things genuinely useful for future sessions. Use "forget" if a saved note becomes outdated (e.g. Zyan says it's no longer true).
+- CONTEXT may include "[Open Follow-ups]" — action items on the Accounts dashboard. Use "add_followup" when Zyan asks you to create a follow-up, reminder, or action item — include an exact verbatim script if he asks for one to practice. Use "complete_followup" when he tells you a follow-up happened, with a brief outcome.
 
 Rules:
 - Ground your answers in the CONTEXT when it's relevant, and reference it specifically (e.g., name the objection, mode, or section) rather than giving a vague answer when the content is right there.
@@ -1510,6 +1580,8 @@ function App(){
   const [autoNav,setAutoNav]=useState(()=>load('p1_coach_autonav',false));
   const [customGlossary,setCustomGlossary]=useState([]);
   const [customGlossaryLoaded,setCustomGlossaryLoaded]=useState(false);
+  const [coachMemory,setCoachMemory]=useState(()=>load(SK.coachMemory,[]));
+  const [followups,setFollowups]=useState(()=>load(SK.followups,[]));
   const coachScrollRef=useRef(null);
 
   const c=T[theme];
@@ -1574,6 +1646,8 @@ function App(){
   const saveGeminiKey=k=>{ setGeminiKey(k); save(SK.geminiKey,k); };
   const saveGeminiModel=m=>{ setGeminiModel(m); save(SK.geminiModel,m); };
   const saveAutoNav=v=>{ setAutoNav(v); save('p1_coach_autonav',v); };
+  const saveCoachMemory=v=>{ setCoachMemory(v); save(SK.coachMemory,v); };
+  const saveFollowups=v=>{ setFollowups(v); save(SK.followups,v); };
   const savePerf=async(next)=>{
     setPerfView(next);
     if(monthKeyFor(perfDate)===monthKey())setPerf(next);
@@ -1654,6 +1728,30 @@ function App(){
       if(name==='go_to_journal_tab'){
         setJournalTab(args.tab);setView('journal');
         return `Opened Journal → ${args.tab}.`;
+      }
+      if(name==='remember'){
+        const note={id:'mem_'+Date.now(),text:args.note,createdAt:new Date().toISOString()};
+        saveCoachMemory([...coachMemory,note]);
+        return `Saved to coaching memory: "${args.note}"`;
+      }
+      if(name==='forget'){
+        const before=coachMemory.length;
+        const next=coachMemory.filter(m=>m.id!==args.memoryId);
+        if(next.length===before)return `No memory found with id ${args.memoryId}.`;
+        saveCoachMemory(next);
+        return `Removed that memory note.`;
+      }
+      if(name==='add_followup'){
+        const fu={id:'fu_'+Date.now(),title:args.title,notes:args.notes,script:args.script||'',
+          status:'open',createdAt:new Date().toISOString()};
+        saveFollowups([...followups,fu]);
+        return `Added follow-up "${args.title}" to Journal → Accounts → Open Items${args.script?' (with script)':''}.`;
+      }
+      if(name==='complete_followup'){
+        const fu=followups.find(f=>f.id===args.followupId);
+        if(!fu)return `No follow-up found with id ${args.followupId}.`;
+        saveFollowups(followups.map(f=>f.id===args.followupId?{...f,status:'done',outcome:args.outcome,completedAt:new Date().toISOString()}:f));
+        return `Marked "${fu.title}" as done. Outcome: ${args.outcome}`;
       }
       return `Unknown navigation action: ${name}.`;
     }catch(e){
@@ -2434,6 +2532,28 @@ function App(){
             <div style={{...S.cardBorder,borderColor:c.accent}}>
               <MD text={OPEN_ITEMS_MD} c={c}/>
             </div>
+            {followups.filter(f=>f.status!=='done').map(f=>(
+              <div key={f.id} style={{...S.cardBorder,borderColor:c.blue}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,marginBottom:6}}>
+                  <div style={{fontSize:13,fontWeight:700,color:c.text}}>🧭 {f.title}</div>
+                  <button onClick={()=>{
+                    const outcome=window.prompt('Outcome (brief note on what happened):','Done');
+                    if(outcome===null)return;
+                    saveFollowups(followups.map(x=>x.id===f.id?{...x,status:'done',outcome,completedAt:new Date().toISOString()}:x));
+                  }} style={{flexShrink:0,padding:'4px 10px',background:c.accent,color:c.accentText,
+                    borderRadius:8,fontSize:10,fontWeight:700,letterSpacing:'0.04em'}}>
+                    MARK DONE
+                  </button>
+                </div>
+                <div style={{fontSize:12,color:c.textSub,lineHeight:1.5,marginBottom:f.script?10:0}}>{f.notes}</div>
+                {f.script&&<MD text={f.script} c={c}/>}
+                <button onClick={()=>saveFollowups(followups.filter(x=>x.id!==f.id))}
+                  style={{marginTop:8,background:'none',border:`1px solid ${c.border}`,borderRadius:8,
+                    padding:'4px 8px',fontSize:10,color:c.textSub,fontWeight:700,letterSpacing:'0.04em'}}>
+                  🗑 Remove
+                </button>
+              </div>
+            ))}
             {CASESTUDIES.map(item=>{
               const open=!collapsedAcctIds.has(item.id);
               const toggle=()=>{
@@ -2469,7 +2589,22 @@ function App(){
     if(mode==='roleplay'){
       return OBJ.map(o=>`### ${o.name}\nTrigger: "${o.trigger}"\nHint: ${o.hint}\nOfficial response: ${o.parts.join(' ')}\nWhy it works: ${o.why}`).join('\n\n');
     }
-    return FULL_KNOWLEDGE_TEXT;
+    let dynamic='';
+    if(coachMemory.length>0){
+      dynamic+='\n\n### [Coach Memory] Things you\'ve previously noted about Zyan\n'+
+        coachMemory.map(m=>`- (id: ${m.id}, saved ${m.createdAt.slice(0,10)}) ${m.text}`).join('\n');
+    }
+    const openFollowups=followups.filter(f=>f.status!=='done');
+    if(openFollowups.length>0){
+      dynamic+='\n\n### [Open Follow-ups] Items on the Accounts dashboard (Journal → Accounts → Open Items)\n'+
+        openFollowups.map(f=>`- (id: ${f.id}) ${f.title}: ${f.notes}${f.script?' [has a saved script]':''}`).join('\n');
+    }
+    const doneFollowups=followups.filter(f=>f.status==='done');
+    if(doneFollowups.length>0){
+      dynamic+='\n\n### [Completed Follow-ups]\n'+
+        doneFollowups.slice(-10).map(f=>`- ${f.title}: ${f.outcome||''} (done ${f.completedAt?f.completedAt.slice(0,10):''})`).join('\n');
+    }
+    return FULL_KNOWLEDGE_TEXT+dynamic;
   }
 
   function CoachScreen(){
@@ -2786,6 +2921,39 @@ function App(){
               left:autoNav?25:3,transition:'left 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.3)'}}/>
           </button>
         </div>
+
+        <div style={S.sectionLabel}>COACH MEMORY</div>
+        {coachMemory.length===0?(
+          <div style={S.cardBorder}>
+            <div style={{fontSize:12,color:c.textSub,lineHeight:1.6}}>
+              Nothing saved yet. As you use Coach, it can save short notes here about patterns,
+              preferences, or things worth remembering across sessions.
+            </div>
+          </div>
+        ):(
+          coachMemory.map(m=>(
+            <div key={m.id} style={{...S.cardBorder,display:'flex',justifyContent:'space-between',gap:10,alignItems:'flex-start'}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,color:c.text,lineHeight:1.5}}>{m.text}</div>
+                <div style={{fontSize:10,color:c.textMuted,marginTop:4}}>Saved {m.createdAt.slice(0,10)}</div>
+              </div>
+              <button onClick={()=>saveCoachMemory(coachMemory.filter(x=>x.id!==m.id))}
+                style={{flexShrink:0,background:'none',border:`1px solid ${c.border}`,borderRadius:8,
+                  padding:'4px 8px',fontSize:10,color:c.textSub,fontWeight:700}}>
+                🗑
+              </button>
+            </div>
+          ))
+        )}
+        {coachMemory.length>0&&(
+          <button onClick={()=>{
+            if(!window.confirm('Clear all coach memory? This cannot be undone.'))return;
+            saveCoachMemory([]);
+          }} style={{width:'100%',padding:'10px',background:'#1a0505',border:'1px solid #3d1010',
+            borderRadius:10,color:'#ef4444',fontSize:12,fontWeight:700,letterSpacing:'0.06em',marginTop:4}}>
+            Clear All Memory
+          </button>
+        )}
 
         <div style={S.sectionLabel}>DATA</div>
         <div style={{...S.cardBorder,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
