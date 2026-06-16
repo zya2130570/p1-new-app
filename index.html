@@ -1615,6 +1615,7 @@ function App(){
   const [acctBodyTab,setAcctBodyTab]=useState('edit');
   const [acctSlashMenu,setAcctSlashMenu]=useState(false);
   const [acctSlashFilter,setAcctSlashFilter]=useState('');
+  const [acctShowHelp,setAcctShowHelp]=useState(false);
   const acctBodyRef=useRef(null);
   const coachScrollRef=useRef(null);
 
@@ -2618,6 +2619,113 @@ function App(){
             setAcctBody(newVal);setAcctSlashMenu(false);setAcctSlashFilter('');
             setTimeout(()=>{ ta.focus(); const c2=before.length+cmd.insert.length; ta.setSelectionRange(c2,c2); },10);
           };
+          // Smart Enter: tables auto-advance cell-to-cell and row-to-row;
+          // bullets auto-continue; double-Enter-on-empty exits the pattern.
+          const handleSmartEnter=(e)=>{
+            const ta=e.target;const val=ta.value;const pos=ta.selectionStart;
+            const lineStart=val.lastIndexOf('\n',pos-1)+1;
+            const lineEnd=val.indexOf('\n',pos);
+            const curLine=val.slice(lineStart,pos);
+            const fullLine=val.slice(lineStart,lineEnd<0?val.length:lineEnd);
+
+            // ── TABLE handling ──
+            if(fullLine.trim().startsWith('|')){
+              const cells=fullLine.split('|'); // e.g. ['', ' Dallas, TX ', ' $1,250 ', '']
+              const isSeparatorRow=cells.every(cell=>!cell.trim()||/^:?-+:?$/.test(cell.trim()));
+              if(isSeparatorRow){
+                e.preventDefault();
+                const lineEndPos=lineEnd<0?val.length:lineEnd;
+                const after=val.slice(lineEndPos);
+                const newVal=val.slice(0,lineEndPos)+'\n'+after.replace(/^\n/,'');
+                setAcctBody(newVal);
+                const target=lineEndPos+1;
+                setTimeout(()=>ta.setSelectionRange(target,target),10);
+                return;
+              }
+              e.preventDefault();
+              // build cell boundary offsets (position of each '|' relative to lineStart)
+              const pipeOffsets=[];
+              for(let i=0;i<fullLine.length;i++)if(fullLine[i]==='|')pipeOffsets.push(i);
+              const cursorOffsetInLine=pos-lineStart;
+              // find which cell (between which two pipes) the cursor sits in
+              let cellIdx=0;
+              for(let i=0;i<pipeOffsets.length-1;i++){
+                if(cursorOffsetInLine>=pipeOffsets[i]){cellIdx=i;}
+              }
+              const numCols=pipeOffsets.length-1; // number of data columns
+              const isLastCol=cellIdx>=numCols-1;
+              const curCellText=cells[cellIdx+1]?.trim()||'';
+              if(isLastCol&&curCellText===''){
+                // double-enter on empty last cell -> exit table entirely
+                const lineEndPos=lineEnd<0?val.length:lineEnd;
+                const before=val.slice(0,lineStart);
+                const after=val.slice(lineEndPos);
+                const newVal=before.replace(/\n$/,'')+'\n\n'+after.replace(/^\n+/,'');
+                setAcctBody(newVal);
+                const target=before.replace(/\n$/,'').length+2;
+                setTimeout(()=>ta.setSelectionRange(target,target),10);
+                return;
+              }
+              if(!isLastCol){
+                // move cursor into the next cell on the same row (select its content for easy overtype)
+                const nextCellStart=lineStart+pipeOffsets[cellIdx+1]+1;
+                const nextCellEnd=lineStart+pipeOffsets[cellIdx+2];
+                setTimeout(()=>ta.setSelectionRange(nextCellStart,nextCellEnd),10);
+                return;
+              }
+              // last column with content -> append a new blank row with same column count
+              const newRowCells=Array(numCols).fill(' ');
+              const newRow='\n|'+newRowCells.join('|')+'|';
+              const lineEndPos=lineEnd<0?val.length:lineEnd;
+              const newVal=val.slice(0,lineEndPos)+newRow+val.slice(lineEndPos);
+              setAcctBody(newVal);
+              const target=lineEndPos+2;
+              setTimeout(()=>ta.setSelectionRange(target,target),10);
+              return;
+            }
+            // ── BULLET handling ──
+            if(/^-\s/.test(fullLine.trim())||fullLine.trim()==='-'){
+              const content=fullLine.replace(/^\s*-\s?/,'').trim();
+              if(content===''){
+                // double-enter on empty bullet -> exit list
+                e.preventDefault();
+                const lineEndPos=lineEnd<0?val.length:lineEnd;
+                const before=val.slice(0,lineStart);
+                const after=val.slice(lineEndPos);
+                const newVal=before+'\n'+after.replace(/^\n*/,'');
+                setAcctBody(newVal);
+                setTimeout(()=>{const p=before.length+1;ta.setSelectionRange(p,p);},10);
+                return;
+              }
+              // has content -> continue list with new '- ' line
+              e.preventDefault();
+              const newVal=val.slice(0,pos)+'\n- '+val.slice(pos);
+              setAcctBody(newVal);
+              setTimeout(()=>{const p=pos+3;ta.setSelectionRange(p,p);},10);
+              return;
+            }
+            // ── CALL SCRIPT label sequence handling ──
+            const scriptSeq=['**Opening:**','**→ If positive:**','**→ If pushback:**','**→ Close:**'];
+            const trimmedLine=fullLine.trim();
+            const seqIdx=scriptSeq.indexOf(trimmedLine);
+            if(seqIdx>=0&&seqIdx<scriptSeq.length-1){
+              const afterLabelContent=curLine.replace(trimmedLine,'').trim();
+              if(afterLabelContent===''&&pos>=lineStart+fullLine.length){
+                // cursor at end of an empty script label line -> jump to next label
+                e.preventDefault();
+                const lineEndPos=lineEnd<0?val.length:lineEnd;
+                const after=val.slice(lineEndPos);
+                // skip ahead to find next script label or just insert it
+                const nextLabel=scriptSeq[seqIdx+1];
+                const newVal=val.slice(0,lineEndPos)+'\n\n'+nextLabel+'\n'+after.replace(/^\n+/,'');
+                setAcctBody(newVal);
+                const target=lineEndPos+2+nextLabel.length+1;
+                setTimeout(()=>ta.setSelectionRange(target,target),10);
+                return;
+              }
+            }
+            // default: normal newline
+          };
           const handleBodyChange=(e)=>{
             const val=e.target.value;setAcctBody(val);
             const pos=e.target.selectionStart;
@@ -2697,8 +2805,11 @@ function App(){
                   {acctBodyTab==='edit'?(
                     <div style={{position:'relative'}}>
                       <textarea ref={acctBodyRef} value={acctBody} onChange={handleBodyChange}
-                        onKeyDown={e=>{if(acctSlashMenu&&e.key==='Escape'){setAcctSlashMenu(false);setAcctSlashFilter('');}
-                          if(acctSlashMenu&&e.key==='Enter'&&filteredCmds.length>0){e.preventDefault();insertCmd(filteredCmds[0]);}}}
+                        onKeyDown={e=>{
+                          if(acctSlashMenu&&e.key==='Escape'){setAcctSlashMenu(false);setAcctSlashFilter('');return;}
+                          if(acctSlashMenu&&e.key==='Enter'&&filteredCmds.length>0){e.preventDefault();insertCmd(filteredCmds[0]);return;}
+                          if(!acctSlashMenu&&e.key==='Enter')handleSmartEnter(e);
+                        }}
                         placeholder={'Type / for commands (gold heading, table, script...)\n\n### Status\nQuotes sent 6/12 — awaiting response.\n\n### Quotes Sent\n| Destination | Price |\n|---|---|\n| Dallas, TX | $1,250 |\n\n### Pain Points\n- Rates too high\n- Needs faster transit'}
                         style={{...S.input,margin:0,minHeight:240,fontFamily:'monospace',fontSize:12,lineHeight:1.7,resize:'vertical',whiteSpace:'pre'}}/>
                       {acctSlashMenu&&filteredCmds.length>0&&(
@@ -2741,15 +2852,63 @@ function App(){
                         </div>
                       )}
                       <div style={{fontSize:10,color:c.textMuted,marginTop:6,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                        <span>Type <span style={{color:c.accent,fontFamily:'monospace'}}>/</span> to open command menu</span>
-                        {acctBody&&(
-                          <button onClick={()=>{if(window.confirm('Clear all body content?'))setAcctBody('');}}
+                        <span>Type <span style={{color:c.accent,fontFamily:'monospace'}}>/</span> for commands · Enter auto-continues tables/bullets, Enter twice exits</span>
+                        <div style={{display:'flex',gap:6,flexShrink:0}}>
+                          <button onClick={()=>setAcctShowHelp(true)}
                             style={{background:'none',border:`1px solid ${c.border}`,borderRadius:6,
-                              padding:'3px 8px',fontSize:10,color:c.textSub,fontWeight:700}}>
-                            Clear
+                              width:20,height:20,fontSize:11,color:c.textSub,fontWeight:700,
+                              display:'flex',alignItems:'center',justifyContent:'center'}}>
+                            ?
                           </button>
-                        )}
+                          {acctBody&&(
+                            <button onClick={()=>setAcctBody('')}
+                              style={{background:'none',border:`1px solid ${c.border}`,borderRadius:6,
+                                padding:'3px 8px',fontSize:10,color:c.textSub,fontWeight:700}}>
+                              Clear
+                            </button>
+                          )}
+                        </div>
                       </div>
+                      {acctShowHelp&&(
+                        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:400,
+                          display:'flex',alignItems:'center',justifyContent:'center',padding:20}}
+                          onClick={()=>setAcctShowHelp(false)}>
+                          <div onClick={e=>e.stopPropagation()}
+                            style={{background:c.surfaceHigh,border:`1.5px solid ${c.accent}`,borderRadius:16,
+                              maxHeight:'80vh',overflowY:'auto',width:'100%',maxWidth:400}}>
+                            <div style={{padding:'14px 16px',borderBottom:`1px solid ${c.border}`,
+                              display:'flex',justifyContent:'space-between',alignItems:'center',
+                              position:'sticky',top:0,background:c.surfaceHigh}}>
+                              <div style={{fontSize:13,fontWeight:700,color:c.accent}}>FORMATTING CHEAT SHEET</div>
+                              <button onClick={()=>setAcctShowHelp(false)}
+                                style={{background:'none',border:'none',color:c.textSub,fontSize:20,lineHeight:1}}>×</button>
+                            </div>
+                            <div style={{padding:'14px 16px'}}>
+                              {[
+                                {label:'Gold Heading',type:'You type','code':'### Status',result:'Renders as a gold section heading'},
+                                {label:'Bold Label',type:'You type','code':'**Contact:** Dave Miller',result:'Contact: shows bold, rest normal'},
+                                {label:'Bullet List',type:'You type','code':'- First point\n- Second point',result:'• First point\n• Second point — press Enter to add the next bullet automatically, press Enter twice (on an empty bullet) to exit the list'},
+                                {label:'Table',type:'You type','code':'| Destination | Price |\n|---|---|\n| Dallas, TX | $1,250 |',result:'A 2-column table with a gold header row. After the heading row, press Enter to jump to the next cell. At the last cell, Enter starts a new row. Enter on an empty last cell exits the table.'},
+                                {label:'Call Script',type:'Use the / menu','code':'### Call Script\n**Opening:** ...\n**→ If positive:** ...','result':'A labeled script you can fill in branch by branch — Enter at the end of an empty label jumps to the next branch'},
+                                {label:'Divider',type:'You type','code':'---',result:'A horizontal line separating sections'},
+                              ].map((item,i)=>(
+                                <div key={i} style={{marginBottom:16}}>
+                                  <div style={{fontSize:12,fontWeight:700,color:c.text,marginBottom:2}}>{item.label}</div>
+                                  <div style={{fontSize:10,color:c.textMuted,marginBottom:4}}>{item.type}:</div>
+                                  <div style={{background:c.cardBg,border:`1px solid ${c.border}`,borderRadius:8,
+                                    padding:'8px 10px',fontFamily:'monospace',fontSize:11,color:c.text,
+                                    whiteSpace:'pre-wrap',marginBottom:4}}>{item.code}</div>
+                                  <div style={{fontSize:11,color:c.textSub,lineHeight:1.5}}>→ {item.result}</div>
+                                </div>
+                              ))}
+                              <div style={{fontSize:10,color:c.textMuted,lineHeight:1.5,marginTop:4,
+                                borderTop:`1px solid ${c.border}`,paddingTop:10}}>
+                                Tip: type <span style={{color:c.accent,fontFamily:'monospace'}}>/</span> anywhere to insert any of these automatically instead of typing the symbols yourself.
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ):(
                     <div style={{...S.cardBorder,minHeight:180}}>
