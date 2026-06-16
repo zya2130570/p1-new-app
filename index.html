@@ -45,7 +45,7 @@ const {useState,useEffect,useMemo,useCallback,useRef} = React;
 function load(k,fb){try{const r=localStorage.getItem(k);return r?JSON.parse(r):fb;}catch{return fb;}}
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
 
-const SK={status:'p1_status_v3',reps:'p1_reps_v2',activity:'p1_activity_v1',theme:'p1_theme',quiz:'p1_quiz',nav:'p1_nav',geminiKey:'p1_gemini_key',geminiModel:'p1_gemini_model',journal:'p1_journal_entries',customGlossary:'p1_custom_glossary',coachMemory:'p1_coach_memory',followups:'p1_followups'};
+const SK={status:'p1_status_v3',reps:'p1_reps_v2',activity:'p1_activity_v1',theme:'p1_theme',quiz:'p1_quiz',nav:'p1_nav',geminiKey:'p1_gemini_key',geminiModel:'p1_gemini_model',journal:'p1_journal_entries',customGlossary:'p1_custom_glossary',coachMemory:'p1_coach_memory',followups:'p1_followups',userAccounts:'p1_user_accounts',toolPrefs:'p1_tool_prefs'};
 function perfKey(mk){ return 'p1_'+mk; }
 
 // ─── THEME ────────────────────────────────────────────────────────────────
@@ -1370,6 +1370,26 @@ const NAV_TOOLS=[{
         outcome:{type:'STRING',description:'Brief note on how it went / what happened.'},
       },required:['followupId','outcome']},
     },
+    {
+      name:'create_account',
+      description:'Create a new account card in Journal → Accounts. Use when Zyan gives you details about a new prospect or account and asks you to save it, or when game-planning a call together. The body field uses markdown: ## for gold headings, **text** for bold, | col | col | for tables, - for bullets.',
+      parameters:{type:'OBJECT',properties:{
+        name:{type:'STRING',description:'Account/company name.'},
+        contact:{type:'STRING',description:'Contact name and title.'},
+        mode:{type:'STRING',description:'Freight mode(s), e.g. "LTL" or "FTL Reefer".'},
+        status:{type:'STRING',description:'Current status, e.g. "Quotes sent 6/12 — awaiting response".'},
+        body:{type:'STRING',description:'Rich body content in markdown. Use ## for gold section headings (Status, Call Script, Quotes, Pain Points, Lessons, etc), **label:** for bold field labels, | col | col | tables, - for bullets.'},
+      },required:['name']},
+    },
+    {
+      name:'update_account',
+      description:'Update an existing user account card. Use the account id from [User Accounts] in CONTEXT. Only include fields you want to change.',
+      parameters:{type:'OBJECT',properties:{
+        accountId:{type:'STRING',description:'The id of the account to update, from CONTEXT.'},
+        name:{type:'STRING'},contact:{type:'STRING'},mode:{type:'STRING'},status:{type:'STRING'},
+        body:{type:'STRING',description:'Full updated body in markdown (replaces existing body entirely). If appending, include all prior content plus new sections.'},
+      },required:['accountId']},
+    },
   ],
 }];
 
@@ -1387,6 +1407,8 @@ function navCallDescription(fc){
     case 'forget': return `Remove a saved memory note.`;
     case 'add_followup': return `Add follow-up "${a.title}"${a.script?' with an exact script':''} to Accounts → Open Items.`;
     case 'complete_followup': return `Mark a follow-up as done — outcome: "${a.outcome}"`;
+    case 'create_account': return `Create account card "${a.name}"${a.status?' ('+a.status+')':''} in Journal → Accounts.`;
+    case 'update_account': return `Update account${a.status?' status: "'+a.status+'"':''} in Journal → Accounts.`;
     default: return `${fc.name}(${JSON.stringify(a)})`;
   }
 }
@@ -1582,6 +1604,18 @@ function App(){
   const [customGlossaryLoaded,setCustomGlossaryLoaded]=useState(false);
   const [coachMemory,setCoachMemory]=useState(()=>load(SK.coachMemory,[]));
   const [followups,setFollowups]=useState(()=>load(SK.followups,[]));
+  const [userAccounts,setUserAccounts]=useState(()=>load(SK.userAccounts,[]));
+  const [editingAccount,setEditingAccount]=useState(null);
+  // Account editor local state (lifted to App to avoid hook-order issues)
+  const [acctName,setAcctName]=useState('');
+  const [acctContact,setAcctContact]=useState('');
+  const [acctMode,setAcctMode]=useState('');
+  const [acctStatus,setAcctStatus]=useState('');
+  const [acctBody,setAcctBody]=useState('');
+  const [acctBodyTab,setAcctBodyTab]=useState('edit');
+  const [acctSlashMenu,setAcctSlashMenu]=useState(false);
+  const [acctSlashFilter,setAcctSlashFilter]=useState('');
+  const acctBodyRef=useRef(null);
   const coachScrollRef=useRef(null);
 
   const c=T[theme];
@@ -1648,6 +1682,18 @@ function App(){
   const saveAutoNav=v=>{ setAutoNav(v); save('p1_coach_autonav',v); };
   const saveCoachMemory=v=>{ setCoachMemory(v); save(SK.coachMemory,v); };
   const saveFollowups=v=>{ setFollowups(v); save(SK.followups,v); };
+  const saveUserAccounts=v=>{ setUserAccounts(v); save(SK.userAccounts,v); };
+  const openAccountEditor=(idOrNew)=>{
+    const existing=idOrNew!=='new'?userAccounts.find(a=>a.id===idOrNew):null;
+    setAcctName(existing?existing.name:'');
+    setAcctContact(existing?existing.contact:'');
+    setAcctMode(existing?existing.mode:'');
+    setAcctStatus(existing?existing.status:'');
+    setAcctBody(existing?existing.body:'');
+    setAcctBodyTab('edit');
+    setAcctSlashMenu(false);setAcctSlashFilter('');
+    setEditingAccount(idOrNew);
+  };
   const savePerf=async(next)=>{
     setPerfView(next);
     if(monthKeyFor(perfDate)===monthKey())setPerf(next);
@@ -1752,6 +1798,22 @@ function App(){
         if(!fu)return `No follow-up found with id ${args.followupId}.`;
         saveFollowups(followups.map(f=>f.id===args.followupId?{...f,status:'done',outcome:args.outcome,completedAt:new Date().toISOString()}:f));
         return `Marked "${fu.title}" as done. Outcome: ${args.outcome}`;
+      }
+      if(name==='create_account'){
+        const acct={id:'acct_'+Date.now(),name:args.name,contact:args.contact||'',
+          mode:args.mode||'',status:args.status||'',body:args.body||'',
+          createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+        saveUserAccounts([...userAccounts,acct]);
+        return `Created account "${args.name}" in Journal → Accounts.`;
+      }
+      if(name==='update_account'){
+        const acct=userAccounts.find(a=>a.id===args.accountId);
+        if(!acct)return `No account found with id ${args.accountId}.`;
+        const updated={...acct,...(args.name&&{name:args.name}),...(args.contact&&{contact:args.contact}),
+          ...(args.mode&&{mode:args.mode}),...(args.status&&{status:args.status}),...(args.body&&{body:args.body}),
+          updatedAt:new Date().toISOString()};
+        saveUserAccounts(userAccounts.map(a=>a.id===args.accountId?updated:a));
+        return `Updated account "${updated.name}".`;
       }
       return `Unknown navigation action: ${name}.`;
     }catch(e){
@@ -2527,7 +2589,171 @@ function App(){
           );
         })()}
 
-        {journalTab==='accounts'&&(
+        {journalTab==='accounts'&&editingAccount&&(()=>{
+          const isNew=editingAccount==='new';
+          const SLASH_CMDS=[
+            {key:'h2',label:'H2 Heading',icon:'H2',desc:'Gold section heading',insert:'## '},
+            {key:'bold',label:'Bold',icon:'B',desc:'Bold text',insert:'**text**'},
+            {key:'bullet',label:'Bullet List',icon:'•',desc:'Bullet point',insert:'- '},
+            {key:'table',label:'Table',icon:'⊞',desc:'2-column table',
+              insert:'| Destination | Quoted Price |\n|---|---|\n| | |\n'},
+            {key:'script',label:'Script Block',icon:'</>',desc:'Call script template',
+              insert:'## Call Script\n\n**Opening:**\n\n**Branch — If positive:**\n\n**Branch — If pushback:**\n\n**Close:**\n'},
+            {key:'divider',label:'Divider',icon:'—',desc:'Horizontal line',insert:'\n---\n'},
+            {key:'painpoints',label:'Pain Points',icon:'⚡',desc:'Pain points section',
+              insert:'## Pain Points\n\n- \n- \n'},
+            {key:'lessons',label:'Lessons',icon:'💡',desc:'Lessons learned',
+              insert:'## Lessons\n\n- \n'},
+          ];
+          const filteredCmds=SLASH_CMDS.filter(cmd=>
+            !acctSlashFilter||cmd.label.toLowerCase().includes(acctSlashFilter.toLowerCase())||
+            cmd.desc.toLowerCase().includes(acctSlashFilter.toLowerCase()));
+          const insertCmd=(cmd)=>{
+            const ta=acctBodyRef.current;if(!ta)return;
+            const val=ta.value;const pos=ta.selectionStart;
+            const slashPos=val.lastIndexOf('/',pos);
+            const before=slashPos>=0?val.slice(0,slashPos):val.slice(0,pos);
+            const after=val.slice(pos);
+            const newVal=before+cmd.insert+after;
+            setAcctBody(newVal);setAcctSlashMenu(false);setAcctSlashFilter('');
+            setTimeout(()=>{ ta.focus(); const c2=before.length+cmd.insert.length; ta.setSelectionRange(c2,c2); },10);
+          };
+          const handleBodyChange=(e)=>{
+            const val=e.target.value;setAcctBody(val);
+            const pos=e.target.selectionStart;
+            if(val[pos-1]==='/'){setAcctSlashMenu(true);setAcctSlashFilter('');}
+            else if(acctSlashMenu){
+              const sp=val.lastIndexOf('/',pos);
+              if(sp>=0)setAcctSlashFilter(val.slice(sp+1,pos));
+              else {setAcctSlashMenu(false);setAcctSlashFilter('');}
+            }
+          };
+          const saveAccount=()=>{
+            if(!acctName.trim())return;
+            if(isNew){
+              const acct={id:'acct_'+Date.now(),name:acctName.trim(),contact:acctContact.trim(),
+                mode:acctMode.trim(),status:acctStatus.trim(),body:acctBody,
+                createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+              saveUserAccounts([...userAccounts,acct]);
+            }else{
+              saveUserAccounts(userAccounts.map(a=>a.id===editingAccount?
+                {...a,name:acctName.trim(),contact:acctContact.trim(),mode:acctMode.trim(),
+                  status:acctStatus.trim(),body:acctBody,updatedAt:new Date().toISOString()}:a));
+            }
+            setEditingAccount(null);
+          };
+          const MODES_LIST=['LTL','FTL / Dry Van','Flatbed','Reefer (LTL)','Reefer (FTL)','Expedited','Drayage','Multiple'];
+          return(
+            <div style={{position:'fixed',inset:0,background:c.bg,zIndex:200,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+                padding:'16px 20px',borderBottom:`1px solid ${c.border}`,background:c.bg,flexShrink:0}}>
+                <button onClick={()=>setEditingAccount(null)}
+                  style={{background:'none',border:'none',color:c.textSub,fontSize:14,padding:'4px 0'}}>← Back</button>
+                <div style={{fontSize:15,fontWeight:700,color:c.text}}>{isNew?'New Account':acctName||'Edit Account'}</div>
+                <button onClick={saveAccount}
+                  style={{background:acctName.trim()?c.accent:'#444',color:acctName.trim()?c.accentText:'#888',
+                    border:'none',borderRadius:10,padding:'8px 16px',fontSize:13,fontWeight:700}}>Save</button>
+              </div>
+              <div style={{flex:1,overflowY:'auto',padding:'16px 20px 40px'}}>
+                {[
+                  {label:'ACCOUNT NAME *',val:acctName,set:setAcctName,ph:'Company name'},
+                  {label:'CONTACT',val:acctContact,set:setAcctContact,ph:'Name, title'},
+                  {label:'STATUS',val:acctStatus,set:setAcctStatus,ph:'e.g. Quotes sent 6/12 — awaiting response'},
+                ].map(f=>(
+                  <div key={f.label} style={{marginBottom:14}}>
+                    <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.08em',color:c.accent,marginBottom:5}}>{f.label}</div>
+                    <input value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph} style={{...S.input,margin:0}}/>
+                  </div>
+                ))}
+                <div style={{marginBottom:14}}>
+                  <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.08em',color:c.accent,marginBottom:5}}>MODE</div>
+                  <select value={MODES_LIST.includes(acctMode)?acctMode:(acctMode?'custom':'')}
+                    onChange={e=>{ if(e.target.value!=='custom')setAcctMode(e.target.value); else setAcctMode(''); }}
+                    style={{...S.input,margin:0}}>
+                    <option value="">Select mode...</option>
+                    {MODES_LIST.map(m=><option key={m} value={m}>{m}</option>)}
+                    <option value="custom">Custom...</option>
+                  </select>
+                  {!MODES_LIST.includes(acctMode)&&acctMode!==''&&(
+                    <input value={acctMode} onChange={e=>setAcctMode(e.target.value)} placeholder="Custom mode"
+                      style={{...S.input,margin:'8px 0 0'}}/>
+                  )}
+                  {!MODES_LIST.includes(acctMode)&&acctMode===''&&(
+                    <input value={acctMode} onChange={e=>setAcctMode(e.target.value)} placeholder="Or type custom mode..."
+                      style={{...S.input,margin:'8px 0 0'}}/>
+                  )}
+                </div>
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:10,fontWeight:700,letterSpacing:'0.08em',color:c.accent,marginBottom:8}}>BODY</div>
+                  <div style={{display:'flex',gap:0,marginBottom:8,background:c.surfaceHigh,borderRadius:10,padding:3}}>
+                    {['edit','preview'].map(t=>(
+                      <button key={t} onClick={()=>setAcctBodyTab(t)}
+                        style={{flex:1,padding:'7px',borderRadius:8,fontSize:12,fontWeight:700,
+                          background:acctBodyTab===t?c.cardBg:'none',color:acctBodyTab===t?c.text:c.textSub,border:'none'}}>
+                        {t==='edit'?'✏️ Edit':'👁 Preview'}
+                      </button>
+                    ))}
+                  </div>
+                  {acctBodyTab==='edit'?(
+                    <div style={{position:'relative'}}>
+                      <textarea ref={acctBodyRef} value={acctBody} onChange={handleBodyChange}
+                        onKeyDown={e=>{if(acctSlashMenu&&e.key==='Escape'){setAcctSlashMenu(false);setAcctSlashFilter('');}
+                          if(acctSlashMenu&&e.key==='Enter'&&filteredCmds.length>0){e.preventDefault();insertCmd(filteredCmds[0]);}}}
+                        placeholder={'Type / for commands (heading, table, script...)\n\n## Status\n**Contact:** Name\n**Mode:** LTL\n\n## Quotes Sent\n| Destination | Price |\n|---|---|\n| Dallas, TX | $1,250 |'}
+                        style={{...S.input,margin:0,minHeight:240,fontFamily:'monospace',fontSize:12,lineHeight:1.7,resize:'vertical',whiteSpace:'pre'}}/>
+                      {acctSlashMenu&&filteredCmds.length>0&&(
+                        <div style={{position:'absolute',bottom:'calc(100% + 4px)',left:0,right:0,
+                          background:c.surfaceHigh,border:`1.5px solid ${c.accent}`,borderRadius:12,
+                          overflow:'hidden',zIndex:100,boxShadow:'0 -8px 24px rgba(0,0,0,0.7)'}}>
+                          <input autoFocus value={acctSlashFilter} onChange={e=>setAcctSlashFilter(e.target.value)}
+                            placeholder="Filter commands..."
+                            style={{width:'100%',boxSizing:'border-box',background:'none',border:'none',
+                              borderBottom:`1px solid ${c.border}`,padding:'10px 14px',fontSize:12,color:c.text,outline:'none'}}/>
+                          {filteredCmds.map((cmd,i)=>(
+                            <div key={cmd.key} onClick={()=>insertCmd(cmd)}
+                              style={{display:'flex',alignItems:'center',gap:12,padding:'11px 14px',
+                                background:i===0?c.cardBg:'none',borderBottom:i<filteredCmds.length-1?`1px solid ${c.border}`:'none',
+                                cursor:'pointer'}}>
+                              <div style={{width:30,height:30,borderRadius:8,
+                                background:i===0?c.accent:c.border,
+                                display:'flex',alignItems:'center',justifyContent:'center',
+                                fontSize:10,fontWeight:800,color:i===0?c.accentText:c.textSub,flexShrink:0}}>
+                                {cmd.icon}
+                              </div>
+                              <div>
+                                <div style={{fontSize:13,fontWeight:600,color:i===0?c.accent:c.text}}>{cmd.label}</div>
+                                <div style={{fontSize:11,color:c.textSub,marginTop:1}}>{cmd.desc}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{fontSize:10,color:c.textMuted,marginTop:6}}>
+                        Type <span style={{color:c.accent,fontFamily:'monospace'}}>/</span> to open command menu
+                      </div>
+                    </div>
+                  ):(
+                    <div style={{...S.cardBorder,minHeight:180}}>
+                      {acctBody?<MD text={acctBody} c={c}/>:
+                        <div style={{fontSize:12,color:c.textMuted,fontStyle:'italic'}}>Nothing to preview yet.</div>}
+                    </div>
+                  )}
+                </div>
+                {!isNew&&(
+                  <button onClick={()=>{
+                    if(!window.confirm('Delete this account?'))return;
+                    saveUserAccounts(userAccounts.filter(a=>a.id!==editingAccount));
+                    setEditingAccount(null);
+                  }} style={{width:'100%',padding:'11px',background:'#1a0505',border:'1px solid #3d1010',
+                    borderRadius:10,color:'#ef4444',fontSize:12,fontWeight:700,marginTop:12}}>
+                    Delete Account
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+        {journalTab==='accounts'&&!editingAccount&&(
           <>
             <div style={{...S.cardBorder,borderColor:c.accent}}>
               <MD text={OPEN_ITEMS_MD} c={c}/>
@@ -2537,35 +2763,61 @@ function App(){
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:10,marginBottom:6}}>
                   <div style={{fontSize:13,fontWeight:700,color:c.text}}>🧭 {f.title}</div>
                   <button onClick={()=>{
-                    const outcome=window.prompt('Outcome (brief note on what happened):','Done');
+                    const outcome=window.prompt('Outcome:','Done');
                     if(outcome===null)return;
                     saveFollowups(followups.map(x=>x.id===f.id?{...x,status:'done',outcome,completedAt:new Date().toISOString()}:x));
                   }} style={{flexShrink:0,padding:'4px 10px',background:c.accent,color:c.accentText,
-                    borderRadius:8,fontSize:10,fontWeight:700,letterSpacing:'0.04em'}}>
-                    MARK DONE
-                  </button>
+                    borderRadius:8,fontSize:10,fontWeight:700}}>MARK DONE</button>
                 </div>
                 <div style={{fontSize:12,color:c.textSub,lineHeight:1.5,marginBottom:f.script?10:0}}>{f.notes}</div>
                 {f.script&&<MD text={f.script} c={c}/>}
                 <button onClick={()=>saveFollowups(followups.filter(x=>x.id!==f.id))}
                   style={{marginTop:8,background:'none',border:`1px solid ${c.border}`,borderRadius:8,
-                    padding:'4px 8px',fontSize:10,color:c.textSub,fontWeight:700,letterSpacing:'0.04em'}}>
-                  🗑 Remove
-                </button>
+                    padding:'4px 8px',fontSize:10,color:c.textSub,fontWeight:700}}>🗑 Remove</button>
               </div>
             ))}
+            {userAccounts.map(acct=>{
+              const open=!collapsedAcctIds.has(acct.id);
+              const initials=acct.name.split(' ').filter(Boolean).slice(0,2).map(w=>w[0]).join('').toUpperCase();
+              const toggle=()=>{const next=new Set(collapsedAcctIds);if(open)next.add(acct.id);else next.delete(acct.id);setCollapsedAcctIds(next);};
+              return(
+                <div key={acct.id} style={{...S.cardBorder,padding:0,overflow:'hidden'}}>
+                  <div onClick={toggle} style={{padding:'14px 16px',display:'flex',alignItems:'center',gap:12,cursor:'pointer'}}>
+                    <div style={{width:38,height:38,borderRadius:19,background:c.accent,display:'flex',alignItems:'center',
+                      justifyContent:'center',fontSize:13,fontWeight:800,color:c.accentText,flexShrink:0}}>
+                      {initials||'?'}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:700,color:c.text}}>{acct.name}</div>
+                      <div style={{fontSize:11,color:c.textSub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginTop:2}}>
+                        {[acct.mode,acct.status].filter(Boolean).join(' · ')||'No status set'}
+                      </div>
+                      <div style={{fontSize:10,color:c.textMuted,marginTop:2}}>Updated {(acct.updatedAt||acct.createdAt||'').slice(0,10)}</div>
+                    </div>
+                    <div style={{display:'flex',gap:8,alignItems:'center',flexShrink:0}}>
+                      <button onClick={e=>{e.stopPropagation();openAccountEditor(acct.id);}}
+                        style={{background:'none',border:`1px solid ${c.border}`,borderRadius:7,
+                          padding:'5px 10px',fontSize:11,color:c.textSub,fontWeight:700}}>Edit</button>
+                      <div style={{transform:open?'rotate(90deg)':'none',transition:'transform 0.15s'}}>
+                        <Icon.chevron color={c.textMuted} size={16}/>
+                      </div>
+                    </div>
+                  </div>
+                  {open&&(
+                    <div style={{borderTop:`1px solid ${c.border}`,padding:'12px 16px 14px'}}>
+                      {acct.body?<MD text={acct.body} c={c}/>:
+                        <div style={{fontSize:12,color:c.textMuted,fontStyle:'italic'}}>No notes yet — tap Edit to add details.</div>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {CASESTUDIES.map(item=>{
               const open=!collapsedAcctIds.has(item.id);
-              const toggle=()=>{
-                const next=new Set(collapsedAcctIds);
-                if(open)next.add(item.id); else next.delete(item.id);
-                setCollapsedAcctIds(next);
-              };
+              const toggle=()=>{const next=new Set(collapsedAcctIds);if(open)next.add(item.id);else next.delete(item.id);setCollapsedAcctIds(next);};
               return(
                 <div key={item.id} style={{...S.cardBorder,padding:0,overflow:'hidden'}}>
-                  <div onClick={toggle}
-                    style={{padding:'14px 16px',display:'flex',justifyContent:'space-between',
-                      alignItems:'center',cursor:'pointer'}}>
+                  <div onClick={toggle} style={{padding:'14px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}}>
                     <span style={{fontSize:13,fontWeight:700,color:c.text}}>{item.name}</span>
                     <div style={{transform:open?'rotate(90deg)':'none',transition:'transform 0.15s'}}>
                       <Icon.chevron color={c.textMuted} size={16}/>
@@ -2575,9 +2827,14 @@ function App(){
                 </div>
               );
             })}
-            <div style={{padding:'4px 20px 0',fontSize:11,color:c.textMuted,lineHeight:1.6}}>
-              🟦 Live personal account data — not official Priority1 policy. Update this section as these accounts progress.
+            <div style={{fontSize:11,color:c.textMuted,lineHeight:1.6,padding:'4px 0 0'}}>
+              🟦 Live personal account data — not official Priority1 policy.
             </div>
+            <button onClick={()=>openAccountEditor('new')}
+              style={{width:'100%',padding:'15px',background:c.accent,color:c.accentText,
+                borderRadius:14,fontSize:14,fontWeight:700,border:'none',marginTop:8}}>
+              + New Account
+            </button>
           </>
         )}
       </div>
@@ -2603,6 +2860,10 @@ function App(){
     if(doneFollowups.length>0){
       dynamic+='\n\n### [Completed Follow-ups]\n'+
         doneFollowups.slice(-10).map(f=>`- ${f.title}: ${f.outcome||''} (done ${f.completedAt?f.completedAt.slice(0,10):''})`).join('\n');
+    }
+    if(userAccounts.length>0){
+      dynamic+='\n\n### [User Accounts] Dynamic account cards (editable by Zyan and by Coach)\n'+
+        userAccounts.map(a=>`- (id: ${a.id}) ${a.name} | Contact: ${a.contact||'—'} | Mode: ${a.mode||'—'} | Status: ${a.status||'—'}\n  Body: ${(a.body||'').slice(0,300)}${(a.body||'').length>300?'…':''}`).join('\n');
     }
     return FULL_KNOWLEDGE_TEXT+dynamic;
   }
