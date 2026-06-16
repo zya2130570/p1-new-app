@@ -1378,7 +1378,7 @@ const NAV_TOOLS=[{
         contact:{type:'STRING',description:'Contact name and title.'},
         mode:{type:'STRING',description:'Freight mode(s), e.g. "LTL" or "FTL Reefer".'},
         status:{type:'STRING',description:'Current status, e.g. "Quotes sent 6/12 — awaiting response".'},
-        body:{type:'STRING',description:'Rich body content in markdown. Use ## for gold section headings (Status, Call Script, Quotes, Pain Points, Lessons, etc), **label:** for bold field labels, | col | col | tables, - for bullets.'},
+        body:{type:'STRING',description:'Rich body content in markdown. Use ### for gold section headings (Status, Call Script, Quotes, Pain Points, Lessons, etc), **label:** for bold field labels, | col | col | tables, - for bullets.'},
       },required:['name']},
     },
     {
@@ -1387,7 +1387,7 @@ const NAV_TOOLS=[{
       parameters:{type:'OBJECT',properties:{
         accountId:{type:'STRING',description:'The id of the account to update, from CONTEXT.'},
         name:{type:'STRING'},contact:{type:'STRING'},mode:{type:'STRING'},status:{type:'STRING'},
-        body:{type:'STRING',description:'Full updated body in markdown (replaces existing body entirely). If appending, include all prior content plus new sections.'},
+        body:{type:'STRING',description:'Full updated body in markdown using ### for gold headings (replaces existing body entirely). If appending, include all prior content plus new sections.'},
       },required:['accountId']},
     },
   ],
@@ -2592,18 +2592,18 @@ function App(){
         {journalTab==='accounts'&&editingAccount&&(()=>{
           const isNew=editingAccount==='new';
           const SLASH_CMDS=[
-            {key:'h2',label:'H2 Heading',icon:'H2',desc:'Gold section heading',insert:'## '},
-            {key:'bold',label:'Bold',icon:'B',desc:'Bold text',insert:'**text**'},
-            {key:'bullet',label:'Bullet List',icon:'•',desc:'Bullet point',insert:'- '},
-            {key:'table',label:'Table',icon:'⊞',desc:'2-column table',
-              insert:'| Destination | Quoted Price |\n|---|---|\n| | |\n'},
-            {key:'script',label:'Script Block',icon:'</>',desc:'Call script template',
-              insert:'## Call Script\n\n**Opening:**\n\n**Branch — If positive:**\n\n**Branch — If pushback:**\n\n**Close:**\n'},
-            {key:'divider',label:'Divider',icon:'—',desc:'Horizontal line',insert:'\n---\n'},
-            {key:'painpoints',label:'Pain Points',icon:'⚡',desc:'Pain points section',
-              insert:'## Pain Points\n\n- \n- \n'},
-            {key:'lessons',label:'Lessons',icon:'💡',desc:'Lessons learned',
-              insert:'## Lessons\n\n- \n'},
+            {key:'h2',label:'Gold Heading',icon:'##',desc:'Gold section heading (like Status, Call Script)',insert:'### '},
+            {key:'bold',label:'Bold Label',icon:'B',desc:'Bold field label, e.g. **Contact:** Dave',insert:'**Label:** '},
+            {key:'bullet',label:'Bullet List',icon:'•',desc:'Add a bullet point',insert:'- '},
+            {key:'table',label:'Quote Table',icon:'⊞',desc:'Destination / price table — fill in the rows',
+              insert:'| Destination | Quoted Price |\n|---|---|\n| Dallas, TX | $1,250 |\n| Chicago, IL | $980 |\n'},
+            {key:'script',label:'Call Script',icon:'</>',desc:'Full call script template with branches',
+              insert:'### Call Script\n\n**Opening:**\n\n**→ If positive:**\n\n**→ If pushback:**\n\n**→ Close:**\n'},
+            {key:'divider',label:'Divider Line',icon:'—',desc:'Horizontal separator between sections',insert:'\n---\n'},
+            {key:'painpoints',label:'Pain Points',icon:'⚡',desc:'Customer pain points section',
+              insert:'### Pain Points\n\n- \n- \n- \n'},
+            {key:'lessons',label:'Lessons',icon:'💡',desc:'Lessons learned from this account',
+              insert:'### Lessons\n\n- \n- \n'},
           ];
           const filteredCmds=SLASH_CMDS.filter(cmd=>
             !acctSlashFilter||cmd.label.toLowerCase().includes(acctSlashFilter.toLowerCase())||
@@ -2699,37 +2699,56 @@ function App(){
                       <textarea ref={acctBodyRef} value={acctBody} onChange={handleBodyChange}
                         onKeyDown={e=>{if(acctSlashMenu&&e.key==='Escape'){setAcctSlashMenu(false);setAcctSlashFilter('');}
                           if(acctSlashMenu&&e.key==='Enter'&&filteredCmds.length>0){e.preventDefault();insertCmd(filteredCmds[0]);}}}
-                        placeholder={'Type / for commands (heading, table, script...)\n\n## Status\n**Contact:** Name\n**Mode:** LTL\n\n## Quotes Sent\n| Destination | Price |\n|---|---|\n| Dallas, TX | $1,250 |'}
+                        placeholder={'Type / for commands (gold heading, table, script...)\n\n### Status\nQuotes sent 6/12 — awaiting response.\n\n### Quotes Sent\n| Destination | Price |\n|---|---|\n| Dallas, TX | $1,250 |\n\n### Pain Points\n- Rates too high\n- Needs faster transit'}
                         style={{...S.input,margin:0,minHeight:240,fontFamily:'monospace',fontSize:12,lineHeight:1.7,resize:'vertical',whiteSpace:'pre'}}/>
                       {acctSlashMenu&&filteredCmds.length>0&&(
-                        <div style={{position:'absolute',bottom:'calc(100% + 4px)',left:0,right:0,
-                          background:c.surfaceHigh,border:`1.5px solid ${c.accent}`,borderRadius:12,
-                          overflow:'hidden',zIndex:100,boxShadow:'0 -8px 24px rgba(0,0,0,0.7)'}}>
-                          <input autoFocus value={acctSlashFilter} onChange={e=>setAcctSlashFilter(e.target.value)}
+                        <div style={{position:'fixed',left:20,right:20,
+                          top:'50%',transform:'translateY(-50%)',
+                          background:c.surfaceHigh,border:`1.5px solid ${c.accent}`,borderRadius:14,
+                          overflow:'hidden',zIndex:300,boxShadow:'0 8px 40px rgba(0,0,0,0.9)',
+                          maxHeight:'70vh',display:'flex',flexDirection:'column'}}>
+                          <div style={{padding:'10px 14px',borderBottom:`1px solid ${c.border}`,flexShrink:0,
+                            display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                            <div style={{fontSize:11,color:c.accent,fontWeight:700,letterSpacing:'0.08em'}}>INSERT</div>
+                            <button onClick={()=>{setAcctSlashMenu(false);setAcctSlashFilter('');}}
+                              style={{background:'none',border:'none',color:c.textSub,fontSize:18,lineHeight:1,padding:0}}>×</button>
+                          </div>
+                          <input value={acctSlashFilter} onChange={e=>setAcctSlashFilter(e.target.value)}
                             placeholder="Filter commands..."
-                            style={{width:'100%',boxSizing:'border-box',background:'none',border:'none',
-                              borderBottom:`1px solid ${c.border}`,padding:'10px 14px',fontSize:12,color:c.text,outline:'none'}}/>
-                          {filteredCmds.map((cmd,i)=>(
-                            <div key={cmd.key} onClick={()=>insertCmd(cmd)}
-                              style={{display:'flex',alignItems:'center',gap:12,padding:'11px 14px',
-                                background:i===0?c.cardBg:'none',borderBottom:i<filteredCmds.length-1?`1px solid ${c.border}`:'none',
-                                cursor:'pointer'}}>
-                              <div style={{width:30,height:30,borderRadius:8,
-                                background:i===0?c.accent:c.border,
-                                display:'flex',alignItems:'center',justifyContent:'center',
-                                fontSize:10,fontWeight:800,color:i===0?c.accentText:c.textSub,flexShrink:0}}>
-                                {cmd.icon}
+                            style={{flexShrink:0,background:'none',border:'none',
+                              borderBottom:`1px solid ${c.border}`,padding:'10px 14px',
+                              fontSize:12,color:c.text,outline:'none'}}/>
+                          <div style={{overflowY:'auto',flex:1}}>
+                            {filteredCmds.map((cmd,i)=>(
+                              <div key={cmd.key} onClick={()=>insertCmd(cmd)}
+                                style={{display:'flex',alignItems:'center',gap:12,padding:'13px 14px',
+                                  background:i===0?c.cardBg:'none',
+                                  borderBottom:i<filteredCmds.length-1?`1px solid ${c.border}`:'none',
+                                  cursor:'pointer'}}>
+                                <div style={{width:34,height:34,borderRadius:9,
+                                  background:i===0?c.accent:c.border,
+                                  display:'flex',alignItems:'center',justifyContent:'center',
+                                  fontSize:10,fontWeight:800,color:i===0?c.accentText:c.textSub,flexShrink:0}}>
+                                  {cmd.icon}
+                                </div>
+                                <div style={{flex:1}}>
+                                  <div style={{fontSize:13,fontWeight:600,color:i===0?c.accent:c.text}}>{cmd.label}</div>
+                                  <div style={{fontSize:11,color:c.textSub,marginTop:2,lineHeight:1.4}}>{cmd.desc}</div>
+                                </div>
                               </div>
-                              <div>
-                                <div style={{fontSize:13,fontWeight:600,color:i===0?c.accent:c.text}}>{cmd.label}</div>
-                                <div style={{fontSize:11,color:c.textSub,marginTop:1}}>{cmd.desc}</div>
-                              </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
                       )}
-                      <div style={{fontSize:10,color:c.textMuted,marginTop:6}}>
-                        Type <span style={{color:c.accent,fontFamily:'monospace'}}>/</span> to open command menu
+                      <div style={{fontSize:10,color:c.textMuted,marginTop:6,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                        <span>Type <span style={{color:c.accent,fontFamily:'monospace'}}>/</span> to open command menu</span>
+                        {acctBody&&(
+                          <button onClick={()=>{if(window.confirm('Clear all body content?'))setAcctBody('');}}
+                            style={{background:'none',border:`1px solid ${c.border}`,borderRadius:6,
+                              padding:'3px 8px',fontSize:10,color:c.textSub,fontWeight:700}}>
+                            Clear
+                          </button>
+                        )}
                       </div>
                     </div>
                   ):(
